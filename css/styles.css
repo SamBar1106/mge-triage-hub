@@ -216,7 +216,9 @@ body {
 
 /* Client List Pane */
 .client-list-pane {
-  width: 440px;
+  width: 35%;
+  min-width: 380px;
+  max-width: 500px;
   background: rgba(24, 24, 27, 0.5);
   border-right: 1px solid var(--border-color);
   overflow-y: auto;
@@ -274,7 +276,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 800px;
+  width: 100%;
 }
 
 .empty-state {
