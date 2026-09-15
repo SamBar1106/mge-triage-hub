@@ -144,7 +144,9 @@ async function initApp() {
     const excludedItems = [
       "Additional Year for All-Inclusive 3 Year Program",
       "Materials for All-Inclusive 3 Year Program",
-      "3rd Year of All-Inclusive 3 Year Program"
+      "3rd Year of All-Inclusive 3 Year Program",
+      "2nd Year of All-Inclusive 3 Year Program",
+      "1st Year of All-Inclusive 3 Year Program"
     ];
 
     backlogData.forEach(item => {
