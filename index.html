@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MGE Training Scheduling & Triage Hub</title>
+  <link rel="stylesheet" href="css/styles.css?v=8" />
+</head>
+<body>
+  <!-- Top Navigation Header -->
+  <header class="ios-header">
+    <div class="header-left">
+      <h1>Scheduling Hub</h1>
+    </div>
+    
+    <!-- Compact KPIs directly in header for max vertical space -->
+    <div class="header-kpis">
+      <div class="mini-kpi" title="Pending for Schedule Value">
+        <span class="mini-kpi-label">Pending</span>
+        <span id="kpi-pending-val">$0.00</span>
+      </div>
+      <div class="mini-kpi" title="Schedule Incomplete Value">
+        <span class="mini-kpi-label">Incomplete</span>
+        <span id="kpi-incomplete-val">$0.00</span>
+      </div>
+      <div class="mini-kpi">
+        <span class="mini-kpi-label">Doctors in View</span>
+        <span id="kpi-clients-count">0</span>
+      </div>
+      <div class="mini-kpi">
+        <span class="mini-kpi-label">Completed</span>
+        <span id="kpi-complete-count">0</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Classification Action Buckets -->
+  <section class="segmented-control-container">
+    <div class="segmented-control">
+      <button class="segment-btn active" data-bucket="PENDING_SCHEDULE">
+        Pending for Schedule <span id="b-count-pending" class="count-pill">0</span>
+      </button>
+      <button class="segment-btn" data-bucket="SCHEDULE_INCOMPLETE">
+        Schedule Incomplete <span id="b-count-incomplete" class="count-pill">0</span>
+      </button>
+      <button class="segment-btn" data-bucket="PROGRAM_COMPLETE">
+        Program Complete <span id="b-count-complete" class="count-pill">0</span>
+      </button>
+      <button class="segment-btn" data-bucket="ALL">
+        All Accounts <span id="b-count-all" class="count-pill">0</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Multi-Field Filter Bar -->
+  <section class="filter-bar ios-search-bar">
+    <div class="search-input-wrapper">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="filter-search" placeholder="Search client, doctor, email, phone..." />
+    </div>
+    <div class="search-input-wrapper">
+      <span class="search-icon">🎓</span>
+      <input type="text" id="filter-course" placeholder="Filter by item name..." />
+    </div>
+    <select id="filter-consultant" class="ios-select">
+      <option value="">All Consultants</option>
+    </select>
+  </section>
+
+  <!-- Split-Screen Triage Workbench -->
+  <main class="workbench">
+    <section id="client-list" class="client-list-pane"></section>
+    <section id="client-detail" class="detail-pane">
+      <div class="empty-state">
+        <span class="empty-icon">📄</span>
+        <p>No Client Selected</p>
+        <p class="empty-subtext">Select a client from the list to view details.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/app.js?v=7"></script>
+</body>
+</html>
