@@ -141,7 +141,18 @@ async function initApp() {
     });
 
     // 4. Attach Backlog Items
+    const excludedItems = [
+      "Additional Year for All-Inclusive 3 Year Program",
+      "Materials for All-Inclusive 3 Year Program",
+      "3rd Year of All-Inclusive 3 Year Program"
+    ];
+
     backlogData.forEach(item => {
+      const itemName = (item['Item Name'] || '').trim();
+      if (excludedItems.includes(itemName)) {
+        return; // Skip special items that don't need scheduling
+      }
+      
       const clientId = String(item['Client ID']).trim();
       if (state.clients.has(clientId)) {
         const amountStr = item['Amount'] || '0';
