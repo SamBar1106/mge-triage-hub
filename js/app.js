@@ -146,7 +146,8 @@ async function initApp() {
       "Materials for All-Inclusive 3 Year Program",
       "3rd Year of All-Inclusive 3 Year Program",
       "2nd Year of All-Inclusive 3 Year Program",
-      "1st Year of All-Inclusive 3 Year Program"
+      "1st Year of All-Inclusive 3 Year Program",
+      "Extra Attendee for Owners Conference"
     ];
 
     backlogData.forEach(item => {
