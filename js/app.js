@@ -212,7 +212,7 @@ function processClientBuckets() {
     client.pdfStatus = hasDates ? 'Has Dates' : 'No Dates';
 
     client.backlogItems.forEach(item => {
-      item.isExpired = (item['Memo'] || '').toUpperCase().includes('SERVICE EXPIRED');
+      item.isExpired = (item['Memo'] || '').toUpperCase().includes('EXPIRED');
       
       const itemName = (item['Item Name'] || '').toLowerCase().trim();
       const isCompleted = (item['Completion Status'] || '').toUpperCase() === 'COMPLETED';
