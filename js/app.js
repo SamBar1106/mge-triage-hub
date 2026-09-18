@@ -305,8 +305,8 @@ function getFilteredClients() {
     if (eventFilter !== 'ALL' && EVENT_MAPPINGS[eventFilter]) {
       const variants = EVENT_MAPPINGS[eventFilter];
       eventMatch = c.backlogItems.some(item => {
+        if (item.isScheduled || item.isExpired) return false;
         const itemName = (item['Item Name'] || '').toLowerCase().trim();
-        // Return true if the exact lowercase name is in the variants array, or if it partially matches
         return variants.some(v => itemName.includes(v));
       });
     }
