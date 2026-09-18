@@ -201,71 +201,72 @@ async function initApp() {
 // === LOGIC: CROSS-REFERENCE & BUCKET CLASSIFICATION ===
 function processClientBuckets() {
   state.clients.forEach(client => {
+    client.pdfRecords.sort((a, b) => b['Month / Dates'].localeCompare(a['Month / Dates']));
+    
+    // Check if client has *any* valid dates scheduled in PDF
     const hasDates = client.pdfRecords.some(pdf => {
       const dates = (pdf['Month / Dates'] || '').toUpperCase().trim();
-      return dates !== '' && dates !== 'NO DATES' && dates !== 'N/A';
+      return dates !== 'NO DATES' && dates !== 'NO DATE' && dates !== 'N/A' && dates.length > 0;
     });
-    client.pdfStatus = hasDates ? 'Have Dates' : 'No Dates';
 
-    client.pendingItemsCount = 0;
-    client.pendingAmount = 0;
+    client.pdfStatus = hasDates ? 'Has Dates' : 'No Dates';
 
     client.backlogItems.forEach(item => {
-      const itemName = (item['Item Name'] || '').toLowerCase().trim();
+      item.isExpired = (item['Memo'] || '').toUpperCase().includes('SERVICE EXPIRED');
       
-      const isScheduled = client.pdfRecords.some(pdf => {
+      const itemName = (item['Item Name'] || '').toLowerCase().trim();
+      const isCompleted = (item['Completion Status'] || '').toUpperCase() === 'COMPLETED';
+      
+      const isScheduledInPdf = client.pdfRecords.some(pdf => {
         const services = (pdf['Services'] || '').toLowerCase();
         return services.includes(itemName);
       });
-
-      item.isScheduled = isScheduled;
-
-      if (!isScheduled) {
-        client.pendingItemsCount++;
-        client.pendingAmount += item.numericAmount;
-      }
+      
+      item.isScheduled = isCompleted || isScheduledInPdf;
     });
 
-    client.backlogStatus = client.pendingItemsCount === 0 ? 'No Paid Items' : 'Items pending for Schedule';
+    const activePendingItems = client.backlogItems.filter(item => !item.isScheduled && !item.isExpired);
+    client.pendingItemsCount = activePendingItems.length;
+    client.pendingAmount = activePendingItems.reduce((sum, item) => sum + item.numericAmount, 0);
 
-    if (client.pdfStatus === 'No Dates' && client.backlogStatus === 'No Paid Items') {
+    if (client.pendingItemsCount === 0) {
       client.bucket = 'PROGRAM_COMPLETE';
-    } else if (client.pdfStatus === 'No Dates' && client.backlogStatus === 'Items pending for Schedule') {
-      client.bucket = 'PENDING_SCHEDULE';
-    } else if (client.pdfStatus === 'Have Dates' && client.backlogStatus === 'Items pending for Schedule') {
+    } else if (hasDates) {
       client.bucket = 'SCHEDULE_INCOMPLETE';
     } else {
-      client.bucket = 'PROGRAM_COMPLETE';
+      client.bucket = 'PENDING_SCHEDULE';
     }
+    client.backlogStatus = client.pendingItemsCount === 0 ? 'No Paid Items' : 'Items pending for Schedule';
   });
 }
 
 function getFilteredClients() {
-  const list = Array.from(state.clients.values());
+  const query = (state.searchQuery || '').toLowerCase();
+  const course = (state.courseQuery || '').toLowerCase();
+  const consultant = state.consultantFilter || 'ALL';
+  const expiredFilter = state.expiredFilter || 'ALL';
 
-  return list.filter(c => {
-    if (state.activeBucket !== 'ALL' && c.bucket !== state.activeBucket) return false;
-    if (state.consultantFilter && c.consultant !== state.consultantFilter) return false;
-
-    if (state.searchQuery) {
-      const q = state.searchQuery.toLowerCase();
-      const matches = (c.doctorName || '').toLowerCase().includes(q) ||
-                      (c.companyName || '').toLowerCase().includes(q) ||
-                      (c.doctorEmail || '').toLowerCase().includes(q) ||
-                      (c.workPhone || '').includes(q) ||
-                      (c.cell1Number || '').includes(q) ||
-                      c.clientId.includes(q);
-      if (!matches) return false;
+  return Array.from(state.clients.values()).filter(c => {
+    const bucketMatch = c.bucket === state.activeBucket;
+    
+    const nameMatch = !query || c.doctorName.toLowerCase().includes(query) || 
+                      (c.companyName || '').toLowerCase().includes(query) ||
+                      (c.workPhone || '').includes(query) || 
+                      (c.doctorEmail || '').toLowerCase().includes(query);
+                      
+    const courseMatch = !course || c.backlogItems.some(item => (item['Item Name']||'').toLowerCase().includes(course));
+    
+    const consultantMatch = !consultant || consultant === 'ALL' || consultant === '' || c.consultant === consultant;
+    
+    let expiredMatch = true;
+    if (expiredFilter === 'has_expired') {
+      expiredMatch = c.backlogItems.some(i => i.isExpired);
+    } else if (expiredFilter === 'no_expired') {
+      expiredMatch = !c.backlogItems.some(i => i.isExpired);
     }
 
-    if (state.courseQuery) {
-      const cq = state.courseQuery.toLowerCase();
-      const hasMatchingItem = c.backlogItems.some(i => (i['Item Name'] || '').toLowerCase().includes(cq));
-      if (!hasMatchingItem) return false;
-    }
-
-    return true;
-  }).sort((a, b) => b.pendingAmount - a.pendingAmount);
+    return bucketMatch && nameMatch && courseMatch && consultantMatch && expiredMatch;
+  });
 }
 
 // === RENDER METHODS ===
@@ -518,6 +519,12 @@ function setupEventListeners() {
 
   document.getElementById('filter-consultant')?.addEventListener('change', (e) => {
     state.consultantFilter = e.target.value;
+    renderKPIs();
+    renderClientList();
+  });
+
+  document.getElementById('filter-expired')?.addEventListener('change', (e) => {
+    state.expiredFilter = e.target.value;
     renderKPIs();
     renderClientList();
   });
