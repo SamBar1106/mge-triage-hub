@@ -376,6 +376,9 @@ function renderAll() {
   renderBucketCounts();
   renderKPIs();
   renderClientList();
+  if (state.selectedClientId && state.clients.has(state.selectedClientId)) {
+      selectClient(state.selectedClientId);
+  }
 }
 
 function renderBucketCounts() {
@@ -467,6 +470,30 @@ function selectClient(clientId) {
   const ownerContacts = client.contacts.filter(c => (c['Position / Post'] || '').toLowerCase().includes('doctor - owner') || (c['Position / Post'] || '').toLowerCase().includes('owner'));
   const pdfLink = client.pdfRecords.length > 0 ? client.pdfRecords[0]['PDF Schedule URL'] : '';
 
+
+  let displayItems = client.backlogItems;
+  if (state.statusFilter === 'pending') {
+      displayItems = displayItems.filter(item => !item.isScheduled && !item.isExpired);
+  } else if (state.statusFilter === 'scheduled') {
+      displayItems = displayItems.filter(item => item.isScheduled);
+  }
+  if (state.expiredFilter === 'has_expired') {
+      displayItems = displayItems.filter(item => item.isExpired);
+  } else if (state.expiredFilter === 'no_expired') {
+      displayItems = displayItems.filter(item => !item.isExpired);
+  }
+  if (state.courseQuery) {
+      const cq = state.courseQuery.toLowerCase();
+      displayItems = displayItems.filter(item => (item['Item Name'] || '').toLowerCase().includes(cq));
+  }
+  if (state.eventFilter && state.eventFilter !== 'ALL' && typeof EVENT_MAPPINGS !== 'undefined' && EVENT_MAPPINGS[state.eventFilter]) {
+      const variants = EVENT_MAPPINGS[state.eventFilter];
+      displayItems = displayItems.filter(item => {
+          const itemName = (item['Item Name'] || '').toLowerCase().trim();
+          return variants.some(v => itemName.includes(v));
+      });
+  }
+
   detailPane.innerHTML = `
     <div class="detail-pane-content">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
@@ -538,7 +565,7 @@ function selectClient(clientId) {
 
       <!-- Ledger -->
       <div class="glass-card">
-        <div class="field-label" style="margin-bottom:8px;">Training Ledger (${client.backlogItems.length} items)</div>
+        <div class="field-label" style="margin-bottom:8px;">Training Ledger (${displayItems.length} items)</div>
         <table class="ledger-table">
           <thead>
             <tr>
@@ -549,8 +576,8 @@ function selectClient(clientId) {
             </tr>
           </thead>
           <tbody>
-            ${client.backlogItems.length === 0 ? '<tr><td colspan="4" style="color:var(--text-secondary);">No backlog items.</td></tr>' : ''}
-            ${client.backlogItems.map(item => `
+            ${displayItems.length === 0 ? '<tr><td colspan="4" style="color:var(--text-secondary);">No backlog items.</td></tr>' : ''}
+            ${displayItems.map(item => `
               <tr>
                 <td style="color:var(--text-primary); font-weight:500;">${item['Item Name']}</td>
                 <td style="color:var(--text-secondary); font-size:12px;">${item['Memo'] || '-'}</td>
@@ -609,38 +636,32 @@ function setupEventListeners() {
 
   document.getElementById('filter-search')?.addEventListener('input', (e) => {
     state.searchQuery = e.target.value.trim();
-    renderKPIs();
-    renderClientList();
+    renderAll();
   });
 
   document.getElementById('filter-course')?.addEventListener('input', (e) => {
     state.courseQuery = e.target.value.trim();
-    renderKPIs();
-    renderClientList();
+    renderAll();
   });
 
   document.getElementById('filter-consultant')?.addEventListener('change', (e) => {
     state.consultantFilter = e.target.value;
-    renderKPIs();
-    renderClientList();
+    renderAll();
   });
 
   document.getElementById('filter-expired')?.addEventListener('change', (e) => {
     state.expiredFilter = e.target.value;
-    renderKPIs();
-    renderClientList();
+    renderAll();
   });
 
   document.getElementById('filter-event')?.addEventListener('change', (e) => {
     state.eventFilter = e.target.value;
-    renderKPIs();
-    renderClientList();
+    renderAll();
   });
 
   document.getElementById('filter-status')?.addEventListener('change', (e) => {
     state.statusFilter = e.target.value;
-    renderKPIs();
-    renderClientList();
+    renderAll();
   });
 
   document.getElementById('client-list')?.addEventListener('click', (e) => {
