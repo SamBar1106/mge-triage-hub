@@ -1,4 +1,24 @@
 
+const firebaseConfig = {
+  apiKey: "AIzaSyA9eTDnW2HK5yPOPTPFpJaTQ-QNvMDqGM",
+  authDomain: "newagent-8678e.firebaseapp.com",
+  databaseURL: "https://newagent-8678e.firebaseio.com",
+  projectId: "newagent-8678e",
+  storageBucket: "newagent-8678e.firebasestorage.app",
+  messagingSenderId: "704368176818",
+  appId: "1:704368176818:web:15b9c1e46d3fe5aeec23ab"
+};
+if (typeof firebase !== 'undefined' && !firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
+
+window.toggleDNC = function(clientId) {
+    if (typeof firebase === 'undefined') return;
+    const isCurrentlyDNC = !!state.dncList[clientId];
+    firebase.database().ref('dncList/' + clientId).set(!isCurrentlyDNC);
+};
+
+
 const EVENT_MAPPINGS = {
   "Conditions & Statistic Management Seminar": [
     "conditions & statistics management seminar",
@@ -41,6 +61,7 @@ const EVENT_MAPPINGS = {
  */
 
 const state = {
+  dncList: {},
   clients: new Map(),
   selectedClientId: null,
   activeBucket: 'PENDING_SCHEDULE',
@@ -132,6 +153,18 @@ async function initApp() {
     const backlogData = parseCSV(backlogRaw);
 
     state.clients.clear();
+
+    // Listen for DNC updates in real time
+    if (typeof firebase !== 'undefined') {
+        firebase.database().ref('dncList').on('value', (snapshot) => {
+            state.dncList = snapshot.val() || {};
+            renderClientList();
+            if (state.selectedClientId && state.clients.has(state.selectedClientId)) {
+                selectClient(state.selectedClientId);
+            }
+        });
+    }
+
 
     // 1. Build Client Index
     clientsData.forEach(c => {
@@ -497,7 +530,13 @@ function selectClient(clientId) {
   detailPane.innerHTML = `
     <div class="detail-pane-content">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
-        <h2 style="font-size:20px;font-weight:700;letter-spacing:-0.5px;">${client.doctorName || `Client ${client.clientId}`}</h2>
+        
+        <h2 style="font-size:20px;font-weight:700;letter-spacing:-0.5px; display:flex; align-items:center; gap:12px;">
+          ${client.doctorName || `Client ${client.clientId}`}
+          <button onclick="toggleDNC('${client.clientId}')" style="background:${state.dncList[client.clientId] ? 'rgba(239, 68, 68, 0.2)' : 'var(--glass-bg)'}; color:${state.dncList[client.clientId] ? 'rgb(248, 113, 113)' : 'var(--text-secondary)'}; border:1px solid ${state.dncList[client.clientId] ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255,255,255,0.1)'}; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:700; cursor:pointer; transition:all 0.2s;">
+             ${state.dncList[client.clientId] ? '🚫 DO NOT CALL' : 'MARK AS DNC'}
+          </button>
+        </h2>
         <div style="font-size:16px;font-weight:700;color:var(--text-primary);">
           Pending: $${client.pendingAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
         </div>
