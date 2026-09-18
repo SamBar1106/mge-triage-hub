@@ -451,8 +451,8 @@ function renderClientList() {
   }
 
   listPane.innerHTML = filtered.map(c => `
-    <div class="client-card ${state.selectedClientId === c.clientId ? 'active' : ''}" data-id="${c.clientId}">
-      <span class="card-name">${c.doctorName || `Client ${c.clientId}`}</span>
+    <div class="client-card ${state.selectedClientId === c.clientId ? 'active' : ''} ${state.dncList[c.clientId] ? 'dnc-card' : ''}" data-id="${c.clientId}">
+      <span class="card-name">${c.doctorName || `Client ${c.clientId}`} ${state.dncList[c.clientId] ? '<span style="font-size:10px; background:rgba(239, 68, 68, 0.2); color:rgb(248, 113, 113); padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold;">DNC</span>' : ''}</span>
       <div class="card-meta" style="margin-top: 8px;">
         <span style="font-weight: 600; color: var(--text-primary);">${c.pendingItemsCount} Items Pending</span>
         <span style="font-weight: 700; color: var(--text-primary);">$${c.pendingAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
