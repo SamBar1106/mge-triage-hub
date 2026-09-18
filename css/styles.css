@@ -20,6 +20,7 @@
   --glass-bg-active: rgba(255, 255, 255, 0.14);
   --glass-border: rgba(255, 255, 255, 0.18);
   --glass-highlight: rgba(255, 255, 255, 0.1);
+  --pane-bg: rgba(24, 24, 27, 0.5);
   
   --badge-loading-bg: rgba(245, 158, 11, 0.2);
   --badge-loading-text: rgb(251, 191, 36);
@@ -56,6 +57,7 @@
     --glass-bg-active: rgba(0, 0, 0, 0.09);
     --glass-border: rgba(0, 0, 0, 0.1);
     --glass-highlight: rgba(0, 0, 0, 0.05);
+    --pane-bg: rgba(0, 0, 0, 0.02);
 
     --badge-loading-bg: rgba(245, 158, 11, 0.15);
     --badge-loading-text: rgb(180, 83, 9);
@@ -273,7 +275,7 @@ body {
   width: 35%;
   min-width: 380px;
   max-width: 500px;
-  background: rgba(24, 24, 27, 0.5);
+  background: var(--pane-bg);
   border-right: 1px solid var(--border-color);
   overflow-y: auto;
   padding: 10px;
