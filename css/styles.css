@@ -380,8 +380,12 @@ a:hover { color: rgb(56, 189, 248); }
   display: inline-block; padding: 2px 7px; border-radius: 999px;
   font-size: 10px; font-weight: 700; text-transform: uppercase;
   background: var(--glass-bg-hover); border: 1px solid var(--glass-border);
-  color: rgb(228, 228, 231); letter-spacing: 0.5px; white-space: nowrap;
+  color: var(--text-primary); letter-spacing: 0.5px; white-space: nowrap;
 }
+.pill-id { background: var(--badge-loading-bg); color: var(--badge-loading-text); border-color: var(--badge-loading-border); }
+.pill-scheduled { background: var(--badge-ready-bg); color: var(--badge-ready-text); border-color: var(--badge-ready-border); }
+.pill-expired { background: var(--badge-error-bg); color: var(--badge-error-text); border-color: var(--badge-error-border); }
+.pill-pending { background: rgba(249, 115, 22, 0.25); color: var(--accent-orange); border-color: rgba(249, 115, 22, 0.5); }
 
 /* Triage Notes Area */
 .triage-input-row {

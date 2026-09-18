@@ -575,7 +575,7 @@ function selectClient(clientId) {
             <div class="field-label">Schedule 2020 PDF Status</div>
             <div class="field-value" style="font-size:13px; font-weight:700; margin-top:2px;">${client.pdfStatus}</div>
           </div>
-          <span class="pill" style="background:rgba(251, 191, 36, 0.2); color:rgb(251, 191, 36); border-color:rgba(251, 191, 36, 0.4);">ID: ${client.clientId}</span>
+          <span class="pill pill-id">ID: ${client.clientId}</span>
         </div>
         <div style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255, 255, 255, 0.08);">
           <button class="btn btn-solid" style="width:100%;" ${!pdfLink ? 'disabled' : ''} onclick="openCleanWindow('${pdfLink}')">
@@ -624,10 +624,10 @@ function selectClient(clientId) {
                 <td style="color:var(--text-secondary); font-size:12px;">${item['Memo'] || '-'}</td>
                 <td>
                   ${item.isScheduled 
-                    ? '<span class="pill" style="background:rgba(34, 197, 94, 0.2); color:rgb(74, 222, 128); border-color:rgba(34, 197, 94, 0.4);">Scheduled</span>' 
+                    ? '<span class="pill pill-scheduled">Scheduled</span>' 
                     : item.isExpired
-                      ? '<span class="pill" style="background:rgba(239, 68, 68, 0.2); color:rgb(248, 113, 113); border-color:rgba(239, 68, 68, 0.4);">Expired</span>'
-                      : '<span class="pill" style="background:rgba(249, 115, 22, 0.25); color:rgb(251, 146, 60); border-color:rgba(249, 115, 22, 0.5);">Pending</span>'}
+                      ? '<span class="pill pill-expired">Expired</span>'
+                      : '<span class="pill pill-pending">Pending</span>'}
                 </td>
                 <td style="${(!item.isScheduled && !item.isExpired) ? 'color: var(--text-primary); font-weight: 700;' : 'color: var(--text-secondary);'}">
                   ${item.numericAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
