@@ -254,8 +254,38 @@ function processClientBuckets() {
       const isCompleted = (item['Completion Status'] || '').toUpperCase() === 'COMPLETED';
       
       const isScheduledInPdf = client.pdfRecords.some(pdf => {
-        const services = (pdf['Services'] || '').toLowerCase();
-        return services.includes(itemName);
+        let services = (pdf['Services'] || '').toLowerCase();
+        
+        // Remove meaningless scheduling text from PDF string
+        services = services.replace(/, courseroom/g, '')
+                           .replace(/courseroom/g, '')
+                           .replace(/, online/g, '')
+                           .replace(/online/g, '')
+                           .replace(/livestream/g, '');
+
+        // Remove meaningless delivery methods from backlog item
+        let normItem = itemName.replace(/- in person only/g, '')
+                               .replace(/livestream/g, '').trim();
+
+        if (services.includes(normItem)) {
+           const matchIdx = services.indexOf(normItem);
+           const textAfter = services.substring(matchIdx + normItem.length, matchIdx + normItem.length + 15);
+           
+           // If the PDF string has a role suffix right after the match (like " - Dr." or ": OM")
+           const hasRoleSuffix = textAfter.includes('dr.') || textAfter.includes('- dr') || textAfter.includes(' dr') ||
+                                 textAfter.includes('- om') || textAfter.includes(' om') || textAfter.includes(': om');
+           
+           if (hasRoleSuffix) {
+               // The PDF specifically assigned this to a Dr or OM. 
+               // If our backlog item is generic (no dr or om), then it's NOT a match for this specific ticket.
+               const itemHasRole = itemName.includes('dr') || itemName.includes('om');
+               if (!itemHasRole) {
+                   return false;
+               }
+           }
+           return true;
+        }
+        return false;
       });
       
       item.isScheduled = isCompleted || isScheduledInPdf;
