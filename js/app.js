@@ -328,8 +328,9 @@ function processClientBuckets() {
            if (itemName.includes('seminar')) {
                const hasSuffixMarker = itemName.match(/[-–:]/);
                const isDr = itemName.includes('dr.');
+               const isInPerson = itemName.includes('in person');
                
-               if (hasSuffixMarker && !isDr) {
+               if (hasSuffixMarker && !isDr && !isInPerson) {
                    return false;
                }
            }
