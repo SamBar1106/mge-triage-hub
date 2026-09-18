@@ -673,27 +673,43 @@ function setupEventListeners() {
 }
 
 function exportCSV() {
-  const filtered = getFilteredClients();
-  const headers = ["Client ID", "Name", "Consultant", "Bucket", "Triage Status", "Triage Note", "Pending Items", "Pending Amount"];
-  const rows = filtered.map(c => {
-    const tr = state.triageData[c.clientId] || {};
-    return [
-      c.clientId,
-      `"${(c.doctorName || c.companyName || '').replace(/"/g, '""')}"`,
-      `"${(c.consultant || '').replace(/"/g, '""')}"`,
-      c.bucket,
-      `"${(tr.status || '').replace(/"/g, '""')}"`,
-      `"${(tr.note || '').replace(/"/g, '""')}"`,
-      c.pendingItemsCount,
-      c.pendingAmount
-    ];
+  const clients = getFilteredClients();
+  let csvContent = "Client Name,Company Name,Email,Phone,Pending Items,Pending Amount\n";
+  
+  clients.forEach(c => {
+    let name = c.doctorName || '';
+    name = name.replace(/^Name\s+/i, '');
+    let company = c.companyName || '';
+    company = company.replace(/^Company Name\s+/i, '');
+    
+    let allEmails = [c.doctorEmail, c.altEmail, ...c.contacts.map(ct => ct['Primary Email'])];
+    allEmails = allEmails.filter(e => e && e.trim() !== '' && e.toLowerCase() !== 'none');
+    allEmails = allEmails.map(e => e.replace(/^Email\s+\d*\s*/i, '').trim());
+    const uniqueEmails = [...new Set(allEmails)].join(' | ');
+
+    let allPhones = [c.workPhone, c.cell1Number, ...c.contacts.map(ct => ct['Cell Phone 1'])];
+    allPhones = allPhones.filter(p => p && p.trim() !== '' && p.toLowerCase() !== 'none');
+    allPhones = allPhones.map(p => p.replace(/^(Work Phone\s*\d*|Cell Phone\s*\d*|Home Phone|Private Phone)\s*/i, '').replace(/dntcall/i, '').trim());
+    const uniquePhones = [...new Set(allPhones)].join(' | ');
+
+    const nameStr = `"${name.replace(/"/g, '""')}"`;
+    const compStr = `"${company.replace(/"/g, '""')}"`;
+    const emailStr = `"${uniqueEmails.replace(/"/g, '""')}"`;
+    const phoneStr = `"${uniquePhones.replace(/"/g, '""')}"`;
+    const items = c.pendingItemsCount;
+    const amount = c.pendingAmount;
+    
+    csvContent += `${nameStr},${compStr},${emailStr},${phoneStr},${items},${amount}\n`;
   });
-  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `MGE_Hub_Export_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
+  
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', 'Triage_Export.csv');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
