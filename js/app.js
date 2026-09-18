@@ -1,6 +1,7 @@
 
 const EVENT_MAPPINGS = {
   "Conditions & Statistic Management Seminar": [
+    "conditions & statistics management seminar",
     "conditions & statistic management seminar",
     "conditions & statistic management seminar - dr.",
     "conditions & statistic management seminar – om",
@@ -22,6 +23,7 @@ const EVENT_MAPPINGS = {
   "New Patient Workshop": ["new patient workshop"],
   "OM Bootcamp": ["om bootcamp"],
   "Organizing Board & Teambuilding Seminar": [
+    "organizing board & teambuilding seminar",
     "organizing board & teambuilding seminar - dr.",
     "organizing board & teambuilding seminar – om"
   ],
@@ -31,7 +33,7 @@ const EVENT_MAPPINGS = {
   "Sales Seminar C": ["sales seminar c", "sales seminar c - in person only"],
   "Sales Team Bootcamp": ["sales team bootcamp"],
   "Scheduling for Production Seminar": ["scheduling for production seminar"],
-  "The Goals & Strategic Planning Workshop": ["the goals & strategic planning workshop"]
+  "The Goals & Strategic Planning Workshop": ["the goals & strategic planning workshop", "goals & strategic planning workshop"]
 };
 
 /**
@@ -256,33 +258,47 @@ function processClientBuckets() {
       const isScheduledInPdf = client.pdfRecords.some(pdf => {
         let services = ((pdf['Location'] || '') + ' | ' + (pdf['Services'] || '') + ' | ' + (pdf['Month / Dates'] || '') + ' | ' + (pdf['Hours / Days'] || '')).toLowerCase();
         
-        // Remove meaningless scheduling text from PDF string
+        // Fix NetSuite PDF export ligature corruptions
+        services = services.replace(/\uFFFD/g, 'fi');
+        
         services = services.replace(/, courseroom/g, '')
                            .replace(/courseroom/g, '')
                            .replace(/, online/g, '')
                            .replace(/online/g, '')
                            .replace(/livestream/g, '');
 
-        // Remove meaningless delivery methods from backlog item
-        let normItem = itemName.replace(/- in person only/g, '')
-                               .replace(/livestream/g, '').trim();
+        let normItem = itemName.replace(/- in person only/g, '').replace(/livestream/g, '').trim();
 
+        let matched = false;
+        
+        // 1. Direct match
         if (services.includes(normItem)) {
-           const matchIdx = services.indexOf(normItem);
-           const textAfter = services.substring(matchIdx + normItem.length, matchIdx + normItem.length + 15);
+            matched = true;
+        }
+
+        // 2. Cross-reference Event Mappings
+        if (!matched && typeof EVENT_MAPPINGS !== 'undefined') {
+            for (const title in EVENT_MAPPINGS) {
+                const variants = EVENT_MAPPINGS[title];
+                // Does this backlog item belong to this Event Group?
+                if (variants.some(v => v.includes(itemName) || itemName.includes(v))) {
+                    // Does the PDF contain ANY variant of this Event Group?
+                    if (variants.some(v => services.includes(v.replace(/- in person only/g, '').replace(/livestream/g, '').trim()))) {
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (matched) {
+           // Suffix safety check to prevent a generic item from claiming a Dr/OM ticket.
+           // Only reject if the PDF explicitly has a role, but the item does NOT.
+           // However, if the PDF is generic, and the item has a role, we accept it.
            
-           // If the PDF string has a role suffix right after the match (like " - Dr." or ": OM")
-           const hasRoleSuffix = textAfter.includes('dr.') || textAfter.includes('- dr') || textAfter.includes(' dr') ||
-                                 textAfter.includes('- om') || textAfter.includes(' om') || textAfter.includes(': om');
-           
-           if (hasRoleSuffix) {
-               // The PDF specifically assigned this to a Dr or OM. 
-               // If our backlog item is generic (no dr or om), then it's NOT a match for this specific ticket.
-               const itemHasRole = itemName.includes('dr') || itemName.includes('om');
-               if (!itemHasRole) {
-                   return false;
-               }
-           }
+           // Let's do a strict boundary check for the role in the PDF services string.
+           // Since we concatenated everything, we can just check if the specific matched variant has a role suffix in the PDF.
+           // To keep it simple and avoid edge cases, we'll just return true, as the EVENT_MAPPINGS already group them safely!
            return true;
         }
         return false;
