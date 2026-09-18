@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MGE Training Scheduling & Triage Hub</title>
-  <link rel="stylesheet" href="css/styles.css?v=9" />
+  <link rel="stylesheet" href="css/styles.css?v=10" />
 </head>
 <body>
   <!-- Top Navigation Header -->
@@ -63,7 +63,12 @@
       <input type="text" id="filter-course" placeholder="Filter by item name..." />
     </div>
     <select id="filter-consultant" class="ios-select">
-      <option value="">All Consultants</option>
+      <option value="ALL">All Consultants</option>
+    </select>
+    <select id="filter-expired" class="ios-select">
+      <option value="ALL">All Expiration Statuses</option>
+      <option value="has_expired">Has Expired Services</option>
+      <option value="no_expired">No Expired Services</option>
     </select>
   </section>
 
@@ -79,6 +84,6 @@
     </section>
   </main>
 
-  <script src="js/app.js?v=7"></script>
+  <script src="js/app.js?v=8"></script>
 </body>
 </html>

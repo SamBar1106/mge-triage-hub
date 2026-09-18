@@ -440,22 +440,26 @@ function selectClient(clientId) {
           <thead>
             <tr>
               <th>Item Name</th>
+              <th>Memo</th>
               <th>Status</th>
               <th>Amount</th>
             </tr>
           </thead>
           <tbody>
-            ${client.backlogItems.length === 0 ? '<tr><td colspan="3" style="color:var(--text-secondary);">No backlog items.</td></tr>' : ''}
+            ${client.backlogItems.length === 0 ? '<tr><td colspan="4" style="color:var(--text-secondary);">No backlog items.</td></tr>' : ''}
             ${client.backlogItems.map(item => `
               <tr>
                 <td style="color:var(--text-primary); font-weight:500;">${item['Item Name']}</td>
+                <td style="color:var(--text-secondary); font-size:12px;">${item['Memo'] || '-'}</td>
                 <td>
                   ${item.isScheduled 
                     ? '<span class="pill" style="background:rgba(34, 197, 94, 0.2); color:rgb(74, 222, 128); border-color:rgba(34, 197, 94, 0.4);">Scheduled</span>' 
-                    : '<span class="pill" style="background:rgba(249, 115, 22, 0.25); color:rgb(251, 146, 60); border-color:rgba(249, 115, 22, 0.5);">Pending</span>'}
+                    : item.isExpired
+                      ? '<span class="pill" style="background:rgba(239, 68, 68, 0.2); color:rgb(248, 113, 113); border-color:rgba(239, 68, 68, 0.4);">Expired</span>'
+                      : '<span class="pill" style="background:rgba(249, 115, 22, 0.25); color:rgb(251, 146, 60); border-color:rgba(249, 115, 22, 0.5);">Pending</span>'}
                 </td>
-                <td style="${!item.isScheduled ? 'color: var(--text-primary); font-weight: 700;' : 'color: var(--text-secondary);'}">
-                  $${item.numericAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                <td style="${(!item.isScheduled && !item.isExpired) ? 'color: var(--text-primary); font-weight: 700;' : 'color: var(--text-secondary);'}">
+                  ${item.numericAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </td>
               </tr>
             `).join('')}
