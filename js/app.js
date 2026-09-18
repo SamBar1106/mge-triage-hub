@@ -328,6 +328,7 @@ function getFilteredClients() {
   const consultant = state.consultantFilter || 'ALL';
   const expiredFilter = state.expiredFilter || 'ALL';
   const eventFilter = state.eventFilter || 'ALL';
+  const statusFilter = state.statusFilter || 'ALL';
 
   return Array.from(state.clients.values()).filter(c => {
     const bucketMatch = c.bucket === state.activeBucket;
@@ -348,12 +349,21 @@ function getFilteredClients() {
     }
 
     let eventMatch = true;
-    if (eventFilter !== 'ALL' && EVENT_MAPPINGS[eventFilter]) {
+    if (eventFilter !== 'ALL' && typeof EVENT_MAPPINGS !== 'undefined' && EVENT_MAPPINGS[eventFilter]) {
       const variants = EVENT_MAPPINGS[eventFilter];
       eventMatch = c.backlogItems.some(item => {
-        if (item.isScheduled || item.isExpired) return false;
+        if (statusFilter === 'pending' && (item.isScheduled || item.isExpired)) return false;
+        if (statusFilter === 'scheduled' && !item.isScheduled) return false;
+        
         const itemName = (item['Item Name'] || '').toLowerCase().trim();
         return variants.some(v => itemName.includes(v));
+      });
+    } else if (statusFilter !== 'ALL') {
+      // If no specific event is selected, just filter by whether they have ANY items of this status
+      eventMatch = c.backlogItems.some(item => {
+        if (statusFilter === 'pending') return !item.isScheduled && !item.isExpired;
+        if (statusFilter === 'scheduled') return item.isScheduled;
+        return true;
       });
     }
 
@@ -623,6 +633,12 @@ function setupEventListeners() {
 
   document.getElementById('filter-event')?.addEventListener('change', (e) => {
     state.eventFilter = e.target.value;
+    renderKPIs();
+    renderClientList();
+  });
+
+  document.getElementById('filter-status')?.addEventListener('change', (e) => {
+    state.statusFilter = e.target.value;
     renderKPIs();
     renderClientList();
   });

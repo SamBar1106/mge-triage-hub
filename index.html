@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MGE Training Scheduling & Triage Hub</title>
-  <link rel="stylesheet" href="css/styles.css?v=17" />
+  <link rel="stylesheet" href="css/styles.css?v=18" />
 </head>
 <body>
   <!-- Top Navigation Header -->
@@ -62,6 +62,11 @@
       <span class="search-icon">🎓</span>
       <input type="text" id="filter-course" placeholder="Filter by item name..." />
     </div>
+    <select id="filter-status" class="ios-select">
+      <option value="ALL">All Item Statuses</option>
+      <option value="pending">Pending Items</option>
+      <option value="scheduled">Scheduled Items</option>
+    </select>
     <select id="filter-event" class="ios-select">
       <option value="ALL">All Events</option>
       <option value="Conditions & Statistic Management Seminar">Conditions & Statistic Management Seminar</option>
