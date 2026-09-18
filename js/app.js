@@ -1,3 +1,39 @@
+
+const EVENT_MAPPINGS = {
+  "Conditions & Statistic Management Seminar": [
+    "conditions & statistic management seminar",
+    "conditions & statistic management seminar - dr.",
+    "conditions & statistic management seminar – om",
+    "conditions & statistic management seminar: om"
+  ],
+  "DSO Summit": ["dso summit"],
+  "Financial Planning & Profitability Seminar": [
+    "financial planning & profitability seminar",
+    "financial planning & profitability seminar - dr.",
+    "financial planning & profitability seminar – om"
+  ],
+  "Get Out of Network Blueprint": ["get out of network blueprint"],
+  "Management Tools & Troubleshooting Seminar": [
+    "management tools & troubleshooting seminar",
+    "management tools & troubleshooting seminar - dr.",
+    "management tools & troubleshooting seminar – om"
+  ],
+  "Marketing Seminar": ["marketing seminar"],
+  "New Patient Workshop": ["new patient workshop"],
+  "OM Bootcamp": ["om bootcamp"],
+  "Organizing Board & Teambuilding Seminar": [
+    "organizing board & teambuilding seminar - dr.",
+    "organizing board & teambuilding seminar – om"
+  ],
+  "Owner's Conference": ["owner's conference"],
+  "Sales Seminar A": ["sales seminar a", "sales seminar a - in person only"],
+  "Sales Seminar B": ["sales seminar b", "sales seminar b - in person only"],
+  "Sales Seminar C": ["sales seminar c", "sales seminar c - in person only"],
+  "Sales Team Bootcamp": ["sales team bootcamp"],
+  "Scheduling for Production Seminar": ["scheduling for production seminar"],
+  "The Goals & Strategic Planning Workshop": ["the goals & strategic planning workshop"]
+};
+
 /**
  * MGE Training Scheduling & Triage Hub - Auditor Workflow Redesign
  */
@@ -245,6 +281,7 @@ function getFilteredClients() {
   const course = (state.courseQuery || '').toLowerCase();
   const consultant = state.consultantFilter || 'ALL';
   const expiredFilter = state.expiredFilter || 'ALL';
+  const eventFilter = state.eventFilter || 'ALL';
 
   return Array.from(state.clients.values()).filter(c => {
     const bucketMatch = c.bucket === state.activeBucket;
@@ -255,7 +292,6 @@ function getFilteredClients() {
                       (c.doctorEmail || '').toLowerCase().includes(query);
                       
     const courseMatch = !course || c.backlogItems.some(item => (item['Item Name']||'').toLowerCase().includes(course));
-    
     const consultantMatch = !consultant || consultant === 'ALL' || consultant === '' || c.consultant === consultant;
     
     let expiredMatch = true;
@@ -265,7 +301,17 @@ function getFilteredClients() {
       expiredMatch = !c.backlogItems.some(i => i.isExpired);
     }
 
-    return bucketMatch && nameMatch && courseMatch && consultantMatch && expiredMatch;
+    let eventMatch = true;
+    if (eventFilter !== 'ALL' && EVENT_MAPPINGS[eventFilter]) {
+      const variants = EVENT_MAPPINGS[eventFilter];
+      eventMatch = c.backlogItems.some(item => {
+        const itemName = (item['Item Name'] || '').toLowerCase().trim();
+        // Return true if the exact lowercase name is in the variants array, or if it partially matches
+        return variants.some(v => itemName.includes(v));
+      });
+    }
+
+    return bucketMatch && nameMatch && courseMatch && consultantMatch && expiredMatch && eventMatch;
   });
 }
 
@@ -525,6 +571,12 @@ function setupEventListeners() {
 
   document.getElementById('filter-expired')?.addEventListener('change', (e) => {
     state.expiredFilter = e.target.value;
+    renderKPIs();
+    renderClientList();
+  });
+
+  document.getElementById('filter-event')?.addEventListener('change', (e) => {
+    state.eventFilter = e.target.value;
     renderKPIs();
     renderClientList();
   });
