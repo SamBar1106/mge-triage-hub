@@ -254,7 +254,7 @@ function processClientBuckets() {
       const isCompleted = (item['Completion Status'] || '').toUpperCase() === 'COMPLETED';
       
       const isScheduledInPdf = client.pdfRecords.some(pdf => {
-        let services = (pdf['Services'] || '').toLowerCase();
+        let services = ((pdf['Location'] || '') + ' | ' + (pdf['Services'] || '') + ' | ' + (pdf['Month / Dates'] || '') + ' | ' + (pdf['Hours / Days'] || '')).toLowerCase();
         
         // Remove meaningless scheduling text from PDF string
         services = services.replace(/, courseroom/g, '')
