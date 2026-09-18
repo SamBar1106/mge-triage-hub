@@ -325,13 +325,14 @@ function processClientBuckets() {
         }
 
         if (matched) {
-           // Suffix safety check to prevent a generic item from claiming a Dr/OM ticket.
-           // Only reject if the PDF explicitly has a role, but the item does NOT.
-           // However, if the PDF is generic, and the item has a role, we accept it.
-           
-           // Let's do a strict boundary check for the role in the PDF services string.
-           // Since we concatenated everything, we can just check if the specific matched variant has a role suffix in the PDF.
-           // To keep it simple and avoid edge cases, we'll just return true, as the EVENT_MAPPINGS already group them safely!
+           if (itemName.includes('seminar')) {
+               const hasSuffixMarker = itemName.match(/[-–:]/);
+               const isDr = itemName.includes('dr.');
+               
+               if (hasSuffixMarker && !isDr) {
+                   return false;
+               }
+           }
            return true;
         }
         return false;
