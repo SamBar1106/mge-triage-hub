@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "ok": true,
+  "startedAt": "2026-09-29T00:49:09.395Z",
+  "finishedAt": "2026-09-29T00:49:09.395Z",
+  "trigger": "initial-migration",
+  "counts": {},
+  "files": {
+    "clients_directory.csv": {
+      "rows": 748,
+      "bytes": 135086,
+      "updatedAt": "2026-09-29T00:34:13.833Z"
+    },
+    "contacts_directory.csv": {
+      "rows": 669,
+      "bytes": 27687,
+      "updatedAt": "2026-09-29T00:34:13.833Z"
+    },
+    "pdf_directory.csv": {
+      "rows": 2835,
+      "bytes": 72926,
+      "updatedAt": "2026-09-29T00:34:13.837Z"
+    },
+    "unscheduled_backlog.csv": {
+      "rows": 14571,
+      "bytes": 258112,
+      "updatedAt": "2026-09-29T00:34:13.841Z"
+    }
+  },
+  "errors": [],
+  "extensionVersion": "n/a (seeded from existing CSVs)"
+}

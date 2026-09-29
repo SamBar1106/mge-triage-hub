@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "MGE Nightly NetSuite Scraper",
+  "version": "1.0.0",
+  "description": "Runs the MGE NetSuite scrapers nightly in your logged-in Chrome, encrypts the CSVs and pushes them to the triage hub repo.",
+  "minimum_chrome_version": "116",
+  "permissions": ["alarms", "storage", "unlimitedStorage", "scripting", "tabs", "notifications"],
+  "host_permissions": [
+    "https://*.netsuite.com/*",
+    "https://*.app.netsuite.com/*",
+    "https://3940793.app.netsuite.com/*",
+    "https://api.github.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "MGE Nightly Scraper",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  },
+  "options_page": "options.html",
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}
