@@ -60,6 +60,7 @@ jobs:
           exit 1
 
       - name: Send email notification
+        if: ${{ !cancelled() }}
         env:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EVENT_NAME: ${{ github.event_name }}

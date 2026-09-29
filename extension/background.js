@@ -276,29 +276,61 @@ function toIsoWithOffset(date) {
 }
 
 async function finishWithStatus(run, ok, s, push) {
-  const data = await sget(['res_clients', 'res_pdf_items', 'res_pdf_summ', 'res_backlog', 'prevCounts']);
-  const prev = data.prevCounts || {};
-
-  let clientsCount = 0;
-  let pendingCount = 0;
-  let pdfCount = 0;
-  let backlogCount = 0;
-  let contactsCount = prev['contacts_directory.csv'] || 669;
-
-  if (data.res_clients && data.res_clients.rows) {
-    clientsCount = data.res_clients.rows.length;
-  } else if (run.counts && run.counts.clients) {
-    clientsCount = run.counts.clients;
+  s = s || {};
+  const isNotConfigured = Boolean(run && run.errors && run.errors.includes('NOT_CONFIGURED'));
+  let data = {};
+  if (!isNotConfigured) {
+    data = await sget(['res_clients', 'res_pdf_items', 'res_pdf_summ', 'res_backlog']);
   }
 
-  if (data.res_pdf_items) {
-    pdfCount = data.res_pdf_items.length;
-  }
-  if (data.res_backlog) {
-    backlogCount = data.res_backlog.length;
+  const enableClients = s.enableClients !== false;
+  const enablePdf = s.enablePdf !== false;
+  const enableBacklog = s.enableBacklog !== false;
+
+  let clientsCount = null;
+  let pdfCount = null;
+  let backlogCount = null;
+  const contactsCount = null; // Contacts is never scraped
+
+  if (!isNotConfigured) {
+    if (enableClients) {
+      if (run && run.done && run.done.clients && data.res_clients && data.res_clients.rows) {
+        clientsCount = data.res_clients.rows.length;
+      } else if (data.res_clients && data.res_clients.rows) {
+        clientsCount = data.res_clients.rows.length;
+      } else if (run && run.counts && typeof run.counts.clients === 'number') {
+        clientsCount = run.counts.clients;
+      }
+    }
+
+    if (enablePdf) {
+      if (run && run.done && run.done.pdf && data.res_pdf_items) {
+        pdfCount = data.res_pdf_items.length;
+      } else if (data.res_pdf_items && data.res_pdf_items.length > 0) {
+        pdfCount = data.res_pdf_items.length;
+      }
+    }
+
+    if (enableBacklog) {
+      if (run && run.done && run.done.backlog && data.res_backlog) {
+        backlogCount = data.res_backlog.length;
+      } else if (data.res_backlog && data.res_backlog.length > 0) {
+        backlogCount = data.res_backlog.length;
+      }
+    }
   }
 
-  if (typeof MGEBuckets !== 'undefined' && data.res_clients && data.res_clients.rows) {
+  const errors = run && run.errors ? [...run.errors] : [];
+  const hitPartialFail = errors.some((e) => e.startsWith('PDF_FAILED_AT') || e.startsWith('BACKLOG_FAILED_AT') || e.startsWith('SKIPPED'));
+  const clientScraperFailed = enableClients && (!run || !run.done || !run.done.clients);
+  const pdfScraperFailed = enablePdf && (!run || !run.done || !run.done.pdf);
+  const backlogScraperFailed = enableBacklog && (!run || !run.done || !run.done.backlog);
+  const anyEnabledFailed = clientScraperFailed || pdfScraperFailed || backlogScraperFailed;
+
+  const isSuccess = Boolean(ok && !hitPartialFail && !anyEnabledFailed && errors.length === 0);
+
+  let pendingCount = null;
+  if (isSuccess && enableClients && enablePdf && enableBacklog && typeof MGEBuckets !== 'undefined' && data.res_clients && data.res_clients.rows) {
     try {
       const bucketRes = MGEBuckets.computeBuckets({
         clients: data.res_clients.rows.map((r) => ({
@@ -317,10 +349,10 @@ async function finishWithStatus(run, ok, s, push) {
       clientsCount = bucketRes.clients;
     } catch (e) {
       console.warn('Could not compute bucket pending count', e);
+      pendingCount = null;
     }
   }
 
-  const isSuccess = ok && !(run.errors || []).some((e) => e.startsWith('SKIPPED'));
   const statusObj = {
     timestamp: toIsoWithOffset(new Date()),
     status: isSuccess ? 'success' : 'failure',
@@ -332,7 +364,17 @@ async function finishWithStatus(run, ok, s, push) {
   };
 
   if (!isSuccess) {
-    statusObj.error = (run.errors && run.errors.length) ? run.errors[run.errors.length - 1] : 'UNKNOWN_FAILURE';
+    if (errors.length > 0) {
+      statusObj.error = errors[errors.length - 1];
+    } else if (clientScraperFailed) {
+      statusObj.error = 'CLIENT_SCRAPE_FAILED';
+    } else if (pdfScraperFailed) {
+      statusObj.error = 'PDF_SCRAPE_FAILED';
+    } else if (backlogScraperFailed) {
+      statusObj.error = 'BACKLOG_SCRAPE_FAILED';
+    } else {
+      statusObj.error = 'UNKNOWN_FAILURE';
+    }
   }
 
   await sset({ lastStatus: statusObj });
@@ -342,10 +384,12 @@ async function finishWithStatus(run, ok, s, push) {
         `${s.encDir}/last_run.json`, JSON.stringify(statusObj, null, 2) + '\n', `data: scraper status (${isSuccess ? 'success' : 'failure'})`);
       await sset({ lastPushedStatus: statusObj });
     } catch (e) {
+      statusObj.status = 'failure';
       statusObj.error = 'STATUS_PUSH_FAILED';
       await sset({ lastStatus: statusObj });
     }
   }
+  return statusObj;
 }
 
 function notify(title, message) {

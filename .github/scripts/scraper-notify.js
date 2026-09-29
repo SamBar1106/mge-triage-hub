@@ -145,7 +145,7 @@ function sendSmtpEmail({ host = 'smtp.gmail.com', port = 465, user, pass, to, fr
   return new Promise((resolve, reject) => {
     let socket;
     try {
-      socket = tlsConnect({ host, port, minVersion: 'TLSv1.2', rejectUnauthorized: true });
+      socket = tlsConnect({ host, port, minVersion: 'TLSv1.2', rejectUnauthorized: true, timeout: 30000 });
     } catch (err) {
       return reject(new Error(`SMTP connection setup failed: ${err.message}`));
     }
@@ -154,7 +154,16 @@ function sendSmtpEmail({ host = 'smtp.gmail.com', port = 465, user, pass, to, fr
     let step = 0;
     let completed = false;
 
-    socket.setEncoding('utf8');
+    if (socket && typeof socket.setTimeout === 'function') {
+      socket.setTimeout(30000);
+      socket.on('timeout', () => {
+        fail('SMTP connection timed out after 30 seconds');
+      });
+    }
+
+    if (socket && typeof socket.setEncoding === 'function') {
+      socket.setEncoding('utf8');
+    }
 
     const send = (line) => {
       socket.write(line + '\r\n');
@@ -193,7 +202,9 @@ function sendSmtpEmail({ host = 'smtp.gmail.com', port = 465, user, pass, to, fr
     function fail(msg) {
       if (!completed) {
         completed = true;
-        socket.destroy();
+        if (socket && typeof socket.destroy === 'function') {
+          socket.destroy();
+        }
         reject(new Error(msg));
       }
     }
@@ -238,18 +249,16 @@ function sendSmtpEmail({ host = 'smtp.gmail.com', port = 465, user, pass, to, fr
         case 7: // 354 DATA
           if (code !== 354) return fail(`Expected 354 after DATA, got: ${line}`);
           step++;
-          const cleanBody = body.replace(/^\./gm, '..');
-          const emailMessage = [
+          const bodyLines = body.split(/\r?\n/).map((l) => (l.startsWith('.') ? '.' + l : l));
+          const headers = [
             `From: ${from || user}`,
             `To: ${to}`,
             `Subject: ${subject}`,
             'MIME-Version: 1.0',
-            'Content-Type: text/plain; charset=utf-8',
-            '',
-            cleanBody,
-            '.'
-          ].join('\r\n');
-          socket.write(emailMessage + '\r\n');
+            'Content-Type: text/plain; charset=utf-8'
+          ];
+          const emailMessage = headers.concat('', bodyLines, '.').join('\r\n') + '\r\n';
+          socket.write(emailMessage);
           break;
         case 8: // 250 after DATA
           if (code !== 250) return fail(`Expected 250 after message data, got: ${line}`);
@@ -330,21 +339,22 @@ async function runEmail(opts) {
       const isSuccess = status.status ? status.status === 'success' : status.ok === true;
       const when = chicagoStamp(finished || now);
       const clients = status.clients !== undefined ? status.clients : (status.counts && status.counts.clients) || 0;
-      const pending = status.pending !== undefined ? status.pending : 0;
+      const pending = status.pending !== undefined ? status.pending : null;
+      const pendingStr = (pending !== null && pending !== undefined) ? pending : 'unknown';
       const contacts = status.contacts !== undefined ? status.contacts : (status.files && status.files['contacts_directory.csv'] && status.files['contacts_directory.csv'].rows) || 0;
       const pdf = status.pdf !== undefined ? status.pdf : (status.files && status.files['pdf_directory.csv'] && status.files['pdf_directory.csv'].rows) || 0;
       const backlog = status.backlog !== undefined ? status.backlog : (status.files && status.files['unscheduled_backlog.csv'] && status.files['unscheduled_backlog.csv'].rows) || 0;
 
       shouldSend = true;
       if (isSuccess) {
-        subject = `MGE scraper: SUCCESS - ${clients} clients / ${pending} pending`;
+        subject = `MGE scraper: SUCCESS - ${clients} clients / ${pendingStr} pending`;
         bodyLines = [
           `Time (America/Chicago): ${when}`,
           'Status: SUCCESS',
           '',
           'Counts:',
           `- Clients: ${clients}`,
-          `- Pending: ${pending}`,
+          `- Pending: ${pendingStr}`,
           `- Contacts: ${contacts}`,
           `- PDF: ${pdf}`,
           `- Backlog: ${backlog}`,
@@ -363,7 +373,7 @@ async function runEmail(opts) {
           '',
           'Counts:',
           `- Clients: ${clients}`,
-          `- Pending: ${pending}`,
+          `- Pending: ${pendingStr}`,
           `- Contacts: ${contacts}`,
           `- PDF: ${pdf}`,
           `- Backlog: ${backlog}`,
@@ -375,7 +385,7 @@ async function runEmail(opts) {
   }
 
   if (shouldSend) {
-    const body = bodyLines.join('\n');
+    const body = bodyLines.map((l) => (l.startsWith('.') ? '.' + l : l)).join('\r\n');
     log(`Sending email: ${subject}`);
     await smtpSend({
       host: 'smtp.gmail.com',

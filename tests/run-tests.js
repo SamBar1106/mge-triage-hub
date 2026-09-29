@@ -513,18 +513,40 @@ async function main() {
     });
     check('notify email: DST twin at 12 PM is skipped', !res.sent && sentEmails.length === countBefore);
 
+    // Test pending null in email
+    writeStatus({
+      timestamp: '2026-09-29T10:15:00-05:00',
+      status: 'failure',
+      clients: 748,
+      pending: null,
+      error: 'PDF_FAILED_AT:40'
+    });
+    const nullPendingRes = await notify.runEmail({
+      root: tmp,
+      password: 'test_password',
+      event: 'push',
+      smtpSend: fakeSmtp
+    });
+    check('notify email: pending null formatted as unknown in email',
+      nullPendingRes.sent && sentEmails[sentEmails.length - 1].body.includes('- Pending: unknown'));
+
     // Test SMTP protocol conversation with a mock TLS socket
     const EventEmitter = require('events');
     const sentCommands = [];
+    const rawDataPayloads = [];
     class MockTlsSocket extends EventEmitter {
       constructor() {
         super();
         this.destroyed = false;
         setTimeout(() => this.emit('data', '220 smtp.gmail.com ESMTP ready\r\n'), 5);
       }
+      setTimeout() {}
       setEncoding() {}
       write(data) {
         sentCommands.push(data.trim());
+        if (data.includes('Subject:')) {
+          rawDataPayloads.push(data);
+        }
         if (data.startsWith('EHLO')) {
           setTimeout(() => this.emit('data', '250-smtp.gmail.com at your service\r\n250 AUTH LOGIN\r\n'), 5);
         } else if (data.startsWith('AUTH LOGIN')) {
@@ -557,7 +579,7 @@ async function main() {
       to: 'recipient@example.com',
       from: 'testuser@gmail.com',
       subject: 'Test Subject',
-      body: 'Test Body',
+      body: 'Test Body\n.dotted line\nThird line',
       tlsConnect: () => new MockTlsSocket()
     });
 
@@ -571,13 +593,209 @@ async function main() {
       sentCommands.some((c) => c.startsWith('RCPT TO:<recipient@example.com>')) &&
       sentCommands.some((c) => c.includes('Subject: Test Subject')));
 
+    // Test CRLF and dot stuffing in DATA message
+    const payload = rawDataPayloads[0] || '';
+    const payloadLines = payload.split('\r\n');
+    check('notify smtp: DATA payload uses CRLF and escapes lines starting with dot',
+      payloadLines.includes('..dotted line') && !payload.match(/(?<!\r)\n/));
+
+    // Test socket timeout
+    let timeoutSet = null;
+    class TimeoutTlsSocket extends EventEmitter {
+      constructor() {
+        super();
+        this.destroyed = false;
+      }
+      setTimeout(ms) {
+        timeoutSet = ms;
+      }
+      setEncoding() {}
+      write() {}
+      destroy() { this.destroyed = true; }
+    }
+    const timeoutSocket = new TimeoutTlsSocket();
+    const timeoutPromise = notify.sendSmtpEmail({
+      host: 'smtp.gmail.com',
+      port: 465,
+      user: 'u@example.com',
+      pass: 'p',
+      to: 't@example.com',
+      subject: 'sub',
+      body: 'body',
+      tlsConnect: () => timeoutSocket
+    });
+    timeoutSocket.emit('timeout');
+    let timeoutFailedCleanly = false;
+    try {
+      await timeoutPromise;
+    } catch (e) {
+      timeoutFailedCleanly = e.message.includes('timed out after 30 seconds') && timeoutSocket.destroyed;
+    }
+    check('notify smtp: 30s socket timeout configured and rejects cleanly on stall', timeoutSet === 30000 && timeoutFailedCleanly);
+
+    // Test password never logged
+    const loggedMsgs = [];
+    const origLog = console.log, origErr = console.error;
+    const testSecret = 'SECRET_PASSWORD_XYZ_DO_NOT_LOG';
+    console.log = (...args) => loggedMsgs.push(args.join(' '));
+    console.error = (...args) => loggedMsgs.push(args.join(' '));
+    try {
+      await notify.runEmail({
+        root: tmp,
+        password: testSecret,
+        event: 'push',
+        smtpSend: fakeSmtp
+      });
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+    check('notify email: password is never logged', !loggedMsgs.some(m => m.includes(testSecret)));
+
     // Check actionlint report
     try {
-      execSync('actionlint scripts/github/scraper-notify.yml');
-      check('actionlint reports nothing on scripts/github/scraper-notify.yml', true);
+      execSync('actionlint .github/workflows/scraper-notify.yml');
+      check('actionlint reports nothing on .github/workflows/scraper-notify.yml', true);
     } catch (e) {
-      check('actionlint reports nothing on scripts/github/scraper-notify.yml', false, e.message);
+      check('actionlint reports nothing on .github/workflows/scraper-notify.yml', false, e.message);
     }
+  }
+
+  // ---------------- 13. Popup status & partial runs ----------------
+  {
+    // Item 1: Popup status
+    const popupHtml = rd(path.join(EXT, 'popup.html'));
+    const { w } = newWindow(popupHtml, 'chrome-extension://dummy-id/popup.html');
+    let mockStatus = {
+      timestamp: '2026-09-28T19:49:09-05:00',
+      status: 'success',
+      clients: 748,
+      pending: 354,
+      contacts: null,
+      pdf: 2835,
+      backlog: 14571
+    };
+    w.chrome = {
+      runtime: {
+        sendMessage: async (m) => {
+          if (m.type === 'status') return { lastStatus: mockStatus, nextRun: null, run: null };
+          return {};
+        },
+        openOptionsPage: () => {}
+      }
+    };
+    const popupJs = rd(path.join(EXT, 'popup.js'));
+    w.eval(popupJs);
+    await w.refresh();
+    const okLines = Array.from(w.document.querySelectorAll('#summary .ok')).map((el) => el.textContent);
+    const mutedLines = Array.from(w.document.querySelectorAll('#summary .muted')).map((el) => el.textContent);
+    check('popup: success displays status SUCCESS, local time, and counts',
+      okLines.some((l) => l.startsWith('Last run: SUCCESS at')) &&
+      mutedLines.includes('Clients: 748') &&
+      mutedLines.includes('Pending: 354') &&
+      mutedLines.includes('PDF: 2835') &&
+      mutedLines.includes('Backlog: 14571') &&
+      !mutedLines.some((l) => l.startsWith('Contacts:')));
+
+    // Popup failure with error
+    mockStatus = {
+      timestamp: '2026-09-28T19:49:09-05:00',
+      status: 'failure',
+      clients: 748,
+      pending: null,
+      contacts: null,
+      pdf: 40,
+      backlog: null,
+      error: 'PDF_FAILED_AT:40'
+    };
+    await w.refresh();
+    const badLines = Array.from(w.document.querySelectorAll('#summary .bad')).map((el) => el.textContent);
+    const mutedLinesFail = Array.from(w.document.querySelectorAll('#summary .muted')).map((el) => el.textContent);
+    check('popup: failure displays status FAILED, error, and pending unknown',
+      badLines.some((l) => l.startsWith('Last run: FAILED at')) &&
+      badLines.includes('PDF_FAILED_AT:40') &&
+      mutedLinesFail.includes('Clients: 748') &&
+      mutedLinesFail.includes('Pending: unknown') &&
+      mutedLinesFail.includes('PDF: 40'));
+
+    // Item 3: Partial runs in background.js
+    const bg = require(path.join(EXT, 'background.js'));
+    global.MGEBuckets = require(path.join(EXT, 'lib/buckets.js'));
+
+    let mockStorage = {};
+    global.chrome = {
+      storage: {
+        local: {
+          get: async (keys) => {
+            const res = {};
+            (Array.isArray(keys) ? keys : [keys]).forEach((k) => { res[k] = mockStorage[k]; });
+            return res;
+          },
+          set: async (obj) => { Object.assign(mockStorage, obj); }
+        }
+      },
+      alarms: { create() {}, clear() {}, get() {} },
+      runtime: { onInstalled: { addListener() {} }, onStartup: { addListener() {} }, onMessage: { addListener() {} } }
+    };
+
+    // PDF_FAILED_AT failure
+    mockStorage = {
+      res_clients: { rows: Array(748).fill(['1', 'Doc', 'C1', 'Active', 'e@x.co', '123', 'addr']) },
+      res_pdf_items: Array(40).fill({}),
+      res_backlog: []
+    };
+    const failRun1 = {
+      errors: ['PDF_FAILED_AT:40'],
+      done: { clients: true }
+    };
+    const resFail1 = await bg.finishWithStatus(failRun1, true, { enableClients: true, enablePdf: true, enableBacklog: true }, false);
+    check('partial runs: PDF_FAILED_AT produces failure, error set, and pending null',
+      resFail1.status === 'failure' && resFail1.error === 'PDF_FAILED_AT:40' && resFail1.pending === null);
+
+    // BACKLOG_FAILED_AT failure
+    const failRun2 = {
+      errors: ['BACKLOG_FAILED_AT:100'],
+      done: { clients: true, pdf: true }
+    };
+    const resFail2 = await bg.finishWithStatus(failRun2, true, { enableClients: true, enablePdf: true, enableBacklog: true }, false);
+    check('partial runs: BACKLOG_FAILED_AT produces failure, error set, and pending null',
+      resFail2.status === 'failure' && resFail2.error === 'BACKLOG_FAILED_AT:100' && resFail2.pending === null);
+
+    // Scraper turned off in settings is not a failure, but leaves count null and pending null
+    mockStorage = {
+      res_clients: { rows: Array(748).fill(['1', 'Doc', 'C1', 'Active', 'e@x.co', '123', 'addr']) },
+      res_pdf_items: [],
+      res_backlog: Array(100).fill({})
+    };
+    const disabledRun = {
+      errors: [],
+      done: { clients: true, backlog: true }
+    };
+    const resDisabled = await bg.finishWithStatus(disabledRun, true, { enableClients: true, enablePdf: false, enableBacklog: true }, false);
+    check('partial runs: turned-off scraper is not failure, count is null, pending is null',
+      resDisabled.status === 'success' && resDisabled.pdf === null && resDisabled.pending === null);
+
+    // Contacts is never scraped: always null
+    check('partial runs: contacts is always null', resDisabled.contacts === null && resFail1.contacts === null);
+
+    // NOT_CONFIGURED failure must not report counts leftover from previous run
+    mockStorage = {
+      res_clients: { rows: Array(748).fill(['1', 'Doc', 'C1', 'Active', 'e@x.co', '123', 'addr']) },
+      res_pdf_items: Array(2835).fill({}),
+      res_backlog: Array(14571).fill({})
+    };
+    const notConfigRun = {
+      errors: ['NOT_CONFIGURED']
+    };
+    const resNotConfig = await bg.finishWithStatus(notConfigRun, false, {}, false);
+    check('partial runs: NOT_CONFIGURED does not report leftover counts',
+      resNotConfig.status === 'failure' &&
+      resNotConfig.error === 'NOT_CONFIGURED' &&
+      resNotConfig.clients === null &&
+      resNotConfig.pending === null &&
+      resNotConfig.pdf === null &&
+      resNotConfig.backlog === null &&
+      resNotConfig.contacts === null);
   }
 
   const failed = results.filter((r) => !r.ok);
