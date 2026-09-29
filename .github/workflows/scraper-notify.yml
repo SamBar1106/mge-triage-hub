@@ -1,6 +1,3 @@
-# PENDING INSTALL: move this file to .github/workflows/scraper-notify.yml (the bot token that pushed
-# this PR lacks the GitHub "workflow" scope). Web UI: Add file > Create new file > paste; or
-#   git mv scripts/github/scraper-notify.yml .github/workflows/scraper-notify.yml
 name: Scraper notify (Antigravity alert)
 
 on:
