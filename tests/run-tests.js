@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { execSync } = require('child_process');
-const { JSDOM, ResourceLoader } = require('jsdom');
+const { JSDOM, ResourceLoader, VirtualConsole } = require('jsdom');
 
 const ROOT = path.resolve(__dirname, '..');
 const EXT = path.join(ROOT, 'extension');
@@ -28,7 +28,9 @@ const LABELS = /^(Company Name|Work Phone|Email( \d)?|Phone|Name|Customer ID|Hom
 const PHONE = /^(\+?1[\s.-]?)?(\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}/;
 
 function newWindow(html, url, extra) {
-  const dom = new JSDOM(html, Object.assign({ url, runScripts: 'outside-only', pretendToBeVisual: true }, extra || {}));
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.sendTo(console, { omitJSDOMErrors: true });
+  const dom = new JSDOM(html, Object.assign({ url, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole }, extra || {}));
   const w = dom.window;
   Object.defineProperty(w, 'crypto', { value: globalThis.crypto, configurable: true });
   // jsdom has no innerText; the app writes counts with innerText.
@@ -302,17 +304,124 @@ async function main() {
     w.close();
   }
 
-  // ---------------- 9. Scheduling helper & 10:00 AM defaults ----------------
+  // ---------------- 8b. Remember-me store & forget logic ----------------
+  {
+    const indexHtml = rd(path.join(ROOT, 'index.html'));
+    const { w } = newWindow(indexHtml, 'http://localhost:8080/index.html');
+    const appPass = 'team-passphrase-123';
+    const encSample = await MGECrypto.encryptText('some,data', appPass, 'clients_directory.csv');
+
+    w.eval(rd(path.join(ROOT, 'js/mge-crypto.js')));
+    w.eval(rd(path.join(ROOT, 'js/app.js')));
+
+    // 1. Saved passphrase in localStorage is preferred and unlocks data without prompt
+    w.localStorage.setItem('mge_passphrase', appPass);
+    let pCount = 0;
+    w.prompt = () => { pCount++; return appPass; };
+    const pass1 = await w.eval(`getPassphrase(${JSON.stringify(encSample)})`);
+    check('remember-me: saved passphrase in localStorage unlocks without prompting', pass1 === appPass && pCount === 0);
+
+    // 2. Invalid saved passphrase is removed from both localStorage and sessionStorage
+    w.localStorage.setItem('mge_passphrase', 'wrong-pass');
+    w.sessionStorage.setItem('mge_passphrase', 'wrong-pass');
+    w.prompt = () => null; // cancel prompt
+    const pass2 = await w.eval(`getPassphrase(${JSON.stringify(encSample)})`);
+    check('remember-me: invalid saved passphrase removed from both localStorage and sessionStorage',
+      pass2 === null && w.localStorage.getItem('mge_passphrase') === null && w.sessionStorage.getItem('mge_passphrase') === null);
+
+    // 3. User checks remember me -> saved to localStorage
+    const modalInput = w.document.getElementById('passphrase-input');
+    const modalCb = w.document.getElementById('remember-me-checkbox');
+    const modalForm = w.document.getElementById('passphrase-form');
+    delete w.prompt;
+    const promptPromise = w.eval(`getPassphrase(${JSON.stringify(encSample)})`);
+    await new Promise((r) => setTimeout(r, 10));
+    modalInput.value = appPass;
+    modalCb.checked = true;
+    modalForm.dispatchEvent(new w.Event('submit'));
+    const pass3 = await promptPromise;
+    check('remember-me: checking remember me saves passphrase to localStorage',
+      pass3 === appPass && w.localStorage.getItem('mge_passphrase') === appPass);
+
+    // 4. Forget saved passphrase clears both stores
+    w.sessionStorage.setItem('mge_passphrase', appPass);
+    try { Object.defineProperty(w.location, 'reload', { value: () => {}, configurable: true, writable: true }); } catch (e) {}
+    w.mgeForgetPassphrase();
+    check('remember-me: forgetPassphrase clears both localStorage and sessionStorage',
+      w.localStorage.getItem('mge_passphrase') === null && w.sessionStorage.getItem('mge_passphrase') === null);
+
+    w.close();
+  }
+
+  // ---------------- 9. Scheduling helper & 3 staggered runs defaults ----------------
   {
     global.importScripts = () => {}; global.chrome = new Proxy({}, { get: () => new Proxy(function () {}, { get: () => ({ addListener() {} }) }) });
-    const { nextRunTime } = require(path.join(EXT, 'background.js'));
+    const { nextRunTime, getNextScheduledRun, migrateSettings, checkAlreadySucceededToday } = require(path.join(EXT, 'background.js'));
     const at = (s) => new Date(s);
     check('schedule: before 10:00 -> same day 10:00', new Date(nextRunTime(10, 0, at('2026-09-28T09:30:00'))).getHours() === 10 && new Date(nextRunTime(10, 0, at('2026-09-28T09:30:00'))).getDate() === 28);
     check('schedule: after 10:00 -> next day 10:00', new Date(nextRunTime(10, 0, at('2026-09-28T10:00:01'))).getDate() === 29);
-    check('schedule: background.js defaults to 10:00 AM', /runHour:\s*10,\s*runMinute:\s*0/.test(rd(path.join(EXT, 'background.js'))));
-    check('schedule: options.js defaults to 10:00 AM', /runHour:\s*10,\s*runMinute:\s*0/.test(rd(path.join(EXT, 'options.js'))));
-    check('schedule: task.xml runs at 09:55:00', /<StartBoundary>2026-01-01T09:55:00<\/StartBoundary>/.test(rd(path.join(ROOT, 'scripts/windows/MGE-Ensure-Chrome.task.xml'))));
-    check('schedule: Register-MGEChromeTask.ps1 defaults to 09:55', /\$Time\s*=\s*'09:55'/.test(rd(path.join(ROOT, 'scripts/windows/Register-MGEChromeTask.ps1'))));
+    check('schedule: background.js defaults to 10:00, 12:00, 16:00', /runTimes:\s*\[\s*'10:00',\s*'12:00',\s*'16:00'\s*\]/.test(rd(path.join(EXT, 'background.js'))));
+    check('schedule: options.js defaults to 10:00, 12:00, 16:00', /runTimes:\s*\[\s*'10:00',\s*'12:00',\s*'16:00'\s*\]/.test(rd(path.join(EXT, 'options.js'))));
+    check('schedule: task.xml runs at 09:55, 11:55, 15:55',
+      /<StartBoundary>2026-01-01T09:55:00<\/StartBoundary>[\s\S]*<StartBoundary>2026-01-01T11:55:00<\/StartBoundary>[\s\S]*<StartBoundary>2026-01-01T15:55:00<\/StartBoundary>/.test(rd(path.join(ROOT, 'scripts/windows/MGE-Ensure-Chrome.task.xml'))));
+    check('schedule: Register-MGEChromeTask.ps1 defaults to 09:55, 11:55, 15:55',
+      /Times\s*=\s*@\('09:55',\s*'11:55',\s*'15:55'\)/.test(rd(path.join(ROOT, 'scripts/windows/Register-MGEChromeTask.ps1'))));
+
+    // Three-time scheduling: getNextScheduledRun
+    const defaultTimes = ['10:00', '12:00', '16:00'];
+    const r1 = new Date(getNextScheduledRun(defaultTimes, at('2026-09-28T09:30:00')));
+    check('schedule 3-run: before 10:00 -> today 10:00', r1.getHours() === 10 && r1.getMinutes() === 0 && r1.getDate() === 28);
+    const r2 = new Date(getNextScheduledRun(defaultTimes, at('2026-09-28T10:30:00')));
+    check('schedule 3-run: between 10:00 and 12:00 -> today 12:00', r2.getHours() === 12 && r2.getMinutes() === 0 && r2.getDate() === 28);
+    const r3 = new Date(getNextScheduledRun(defaultTimes, at('2026-09-28T12:30:00')));
+    check('schedule 3-run: between 12:00 and 16:00 -> today 16:00', r3.getHours() === 16 && r3.getMinutes() === 0 && r3.getDate() === 28);
+    const r4 = new Date(getNextScheduledRun(defaultTimes, at('2026-09-28T16:30:00')));
+    check('schedule 3-run: after 16:00 -> tomorrow 10:00', r4.getHours() === 10 && r4.getMinutes() === 0 && r4.getDate() === 29);
+
+    // Settings migration
+    const m1 = migrateSettings({ runHour: 9, runMinute: 15 });
+    check('settings migration: old runHour/runMinute migrated to runTimes', Array.isArray(m1.runTimes) && m1.runTimes[0] === '09:15' && m1.runTimes[1] === '12:00' && m1.runTimes[2] === '16:00');
+    const m2 = migrateSettings({});
+    check('settings migration: empty settings gets 3 default runTimes', Array.isArray(m2.runTimes) && m2.runTimes[0] === '10:00' && m2.runTimes[1] === '12:00' && m2.runTimes[2] === '16:00');
+    const m3 = migrateSettings({ runTimes: ['08:00', '13:00', '17:00'] });
+    check('settings migration: existing runTimes preserved', m3.runTimes[0] === '08:00' && m3.runTimes[1] === '13:00' && m3.runTimes[2] === '17:00');
+
+    // Skip-if-succeeded-today check
+    const mockS = { ghOwner: 'SamBar1106', ghRepo: 'mge-triage-hub', ghBranch: 'main', ghToken: 'tok', encDir: 'data/enc' };
+    const todayChicago = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
+
+    // 1. Success today -> skip (returns true)
+    const fetchSuccessToday = async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ status: 'success', timestamp: `${todayChicago}T10:05:00-05:00` })
+    });
+    const skip1 = await checkAlreadySucceededToday(mockS, new Date(), fetchSuccessToday);
+    check('skip check: success today -> skip (true)', skip1 === true);
+
+    // 2. Failure today -> run (returns false)
+    const fetchFailureToday = async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ status: 'failure', timestamp: `${todayChicago}T10:05:00-05:00` })
+    });
+    const skip2 = await checkAlreadySucceededToday(mockS, new Date(), fetchFailureToday);
+    check('skip check: failure today -> run (false)', skip2 === false);
+
+    // 3. Success yesterday -> run (returns false)
+    const fetchSuccessYesterday = async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ status: 'success', timestamp: '2026-01-01T10:05:00-05:00' })
+    });
+    const skip3 = await checkAlreadySucceededToday(mockS, new Date(), fetchSuccessYesterday);
+    check('skip check: success yesterday -> run (false)', skip3 === false);
+
+    // 4. Fetch error -> run (returns false)
+    const fetchError = async () => { throw new Error('Network error'); };
+    const skip4 = await checkAlreadySucceededToday(mockS, new Date(), fetchError);
+    check('skip check: fetch error -> run (false)', skip4 === false);
+
+    const fetchNotFound = async () => ({ ok: false, status: 404 });
+    const skip5 = await checkAlreadySucceededToday(mockS, new Date(), fetchNotFound);
+    check('skip check: 404 response -> run (false)', skip5 === false);
   }
 
   // ---------------- 10. Client bucketing logic & committed data 354 pending ----------------
@@ -392,16 +501,16 @@ async function main() {
     writeStatus({ ok: true, finishedAt: new Date('2026-09-29T09:00:00Z').toISOString(), errors: [] });
     r = await notify.run({ ...base, event: 'push', now: new Date('2026-09-29T09:00:00Z') });
     check('notify: success -> alert file deleted + issue closed with comment', !fs.existsSync(alertFile) && issues[0].state === 'closed' && /succeeded/.test(issues[0].lastComment) && r.closed === 1);
-    // 11 AM fallback: last run was yesterday
-    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T16:00:00Z') }); // 11 AM CDT
-    check('notify: 11 AM fallback with no run today -> NO_RUN_TODAY issue + alert file', r.decision === 'alert' && issues.length === 2 && issues[1].title === 'MGE scraper failed 2026-09-30' && rd(alertFile).includes('NO_RUN_TODAY'));
+    // 5 PM fallback: last run was yesterday
+    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T22:00:00Z') }); // 5 PM CDT
+    check('notify: 5 PM fallback with no run today -> NO_RUN_TODAY issue + alert file', r.decision === 'alert' && issues.length === 2 && issues[1].title === 'MGE scraper failed 2026-09-30' && rd(alertFile).includes('NO_RUN_TODAY'));
     const n = calls.length;
-    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T17:00:00Z') }); // noon CDT -> other cron entry
-    check('notify: DST twin cron at 12 PM Chicago is skipped', r.decision === 'skip' && calls.length === n);
+    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T23:00:00Z') }); // 6 PM CDT -> other cron entry
+    check('notify: DST twin cron at 6 PM Chicago is skipped', r.decision === 'skip' && calls.length === n);
     writeStatus({ ok: true, finishedAt: new Date('2026-09-30T07:30:00Z').toISOString(), errors: [] });
     fs.unlinkSync(alertFile); const before = issues.length;
-    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T16:00:00Z') });
-    check('notify: 11 AM fallback with a good run today -> noop', r.decision === 'noop' && issues.length === before && !fs.existsSync(alertFile));
+    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T22:00:00Z') });
+    check('notify: 5 PM fallback with a good run today -> noop', r.decision === 'noop' && issues.length === before && !fs.existsSync(alertFile));
 
     // Test new status file schema
     writeStatus({ status: 'failure', timestamp: '2026-09-29T10:05:00-05:00', error: 'NOT_LOGGED_IN' });
@@ -490,28 +599,28 @@ async function main() {
       sentEmails[1].body.includes('NOT_LOGGED_IN') &&
       sentEmails[1].body.includes('https://sambar1106.github.io/mge-triage-hub/'));
 
-    // Test 11 AM no-run fallback
+    // Test 5 PM no-run fallback
     res = await notify.runEmail({
       root: tmp,
       password: 'test_password',
       event: 'schedule',
-      now: new Date('2026-09-30T16:00:00Z'), // 11 AM CDT
+      now: new Date('2026-09-30T22:00:00Z'), // 5 PM CDT
       smtpSend: fakeSmtp
     });
 
-    check('notify email: 11 AM fallback sends FAILED email with NO_RUN_TODAY',
+    check('notify email: 5 PM fallback sends FAILED email with NO_RUN_TODAY',
       res.sent && sentEmails[2].subject === 'MGE scraper: FAILED' && sentEmails[2].body.includes('NO_RUN_TODAY'));
 
-    // Test DST twin skip (12 PM Chicago)
+    // Test DST twin skip (6 PM Chicago)
     const countBefore = sentEmails.length;
     res = await notify.runEmail({
       root: tmp,
       password: 'test_password',
       event: 'schedule',
-      now: new Date('2026-09-30T17:00:00Z'), // 12 PM CDT
+      now: new Date('2026-09-30T23:00:00Z'), // 6 PM CDT
       smtpSend: fakeSmtp
     });
-    check('notify email: DST twin at 12 PM is skipped', !res.sent && sentEmails.length === countBefore);
+    check('notify email: DST twin at 6 PM is skipped', !res.sent && sentEmails.length === countBefore);
 
     // Test pending null in email
     writeStatus({
@@ -654,7 +763,7 @@ async function main() {
 
     // Check actionlint report
     try {
-      execSync('actionlint .github/workflows/scraper-notify.yml');
+      execSync('actionlint .github/workflows/scraper-notify.yml', { cwd: ROOT });
       check('actionlint reports nothing on .github/workflows/scraper-notify.yml', true);
     } catch (e) {
       check('actionlint reports nothing on .github/workflows/scraper-notify.yml', false, e.message);
@@ -717,6 +826,30 @@ async function main() {
       mutedLinesFail.includes('Clients: 748') &&
       mutedLinesFail.includes('Pending: unknown') &&
       mutedLinesFail.includes('PDF: 40'));
+
+    // Progress rows
+    const mockRun = {
+      phase: 'pdf',
+      startedAt: '2026-09-28T10:00:00-05:00',
+      progress: {
+        clients: { status: 'Done', step: '748 clients (1 pages)', done: 1, total: 1, startedAt: '2026-09-28T10:00:00-05:00' },
+        pdf: { status: 'Running', step: '40/748 clients', done: 40, total: 748, startedAt: '2026-09-28T10:01:00-05:00' },
+        backlog: { status: 'Waiting', step: 'Waiting', done: 0, total: null, startedAt: null },
+        upload: { status: 'Waiting', step: 'Waiting', done: 0, total: null, startedAt: null }
+      }
+    };
+    w.chrome.runtime.sendMessage = async (m) => {
+      if (m.type === 'status') return { lastStatus: mockStatus, nextRun: null, run: mockRun };
+      return {};
+    };
+    await w.refresh();
+    const pRows = Array.from(w.document.querySelectorAll('#progress .progress-row'));
+    const names = pRows.map((r) => r.querySelector('.progress-name')?.textContent);
+    const statuses = pRows.map((r) => r.querySelector('.progress-status')?.textContent);
+    const hasProgressBars = pRows.every((r) => !!r.querySelector('progress'));
+    check('popup: progress rows rendered for all scrapers with status and progress bars',
+      names.includes('Client list') && names.includes('PDF schedules') && names.includes('Unscheduled backlog') && names.includes('Upload') &&
+      statuses.includes('Done') && statuses.includes('Running') && statuses.includes('Waiting') && hasProgressBars);
 
     // Item 3: Partial runs in background.js
     const bg = require(path.join(EXT, 'background.js'));

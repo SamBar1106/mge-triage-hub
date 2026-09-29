@@ -6,12 +6,12 @@ on:
     paths:
       - data/enc/last_run.json   # ONLY the status file: alert commits (ANTIGRAVITY_ALERT.md) never retrigger this
   schedule:
-    - cron: '0 16 * * *'   # 11:00 AM CDT
-    - cron: '0 17 * * *'   # 11:00 AM CST (script only acts when it is 11 AM in America/Chicago)
+    - cron: '0 22 * * *'   # 5:00 PM CDT
+    - cron: '0 23 * * *'   # 5:00 PM CST (script only acts when it is 5 PM in America/Chicago)
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Optional: "fallback" = run the 11 AM no-run check now'
+        description: 'Optional: "fallback" = run the 5 PM no-run check now'
         required: false
         default: ''
 

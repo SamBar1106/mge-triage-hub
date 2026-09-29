@@ -2,27 +2,52 @@ const $ = (id) => document.getElementById(id);
 const TEXT = ['nsOrigin', 'searchId', 'ghOwner', 'ghRepo', 'ghBranch', 'ghToken', 'pdfChunk', 'backlogBatch'];
 const BOOL = ['enableClients', 'enablePdf', 'enableBacklog'];
 const DEF = { nsOrigin: 'https://3940793.app.netsuite.com', searchId: '72', ghOwner: 'SamBar1106', ghRepo: 'mge-triage-hub', ghBranch: 'main',
-  pdfChunk: 40, backlogBatch: 100, enableClients: true, enablePdf: true, enableBacklog: true, runHour: 10, runMinute: 0 };
+  pdfChunk: 40, backlogBatch: 100, enableClients: true, enablePdf: true, enableBacklog: true, runTimes: ['10:00', '12:00', '16:00'] };
 const msg = (t, ok) => { $('msg').textContent = t; $('msg').className = ok ? 'ok' : 'bad'; };
+
+function migrateSettings(settings) {
+  if (!settings) return Object.assign({}, DEF);
+  const s = Object.assign({}, settings);
+  if (!Array.isArray(s.runTimes) || s.runTimes.length === 0) {
+    if (s.runHour !== undefined && s.runMinute !== undefined) {
+      const oldTime = `${String(s.runHour).padStart(2, '0')}:${String(s.runMinute).padStart(2, '0')}`;
+      s.runTimes = [oldTime, '12:00', '16:00'];
+    } else {
+      s.runTimes = ['10:00', '12:00', '16:00'];
+    }
+  }
+  while (s.runTimes.length < 3) {
+    const defaults = ['10:00', '12:00', '16:00'];
+    s.runTimes.push(defaults[s.runTimes.length]);
+  }
+  return s;
+}
 
 async function load() {
   const { settings } = await chrome.storage.local.get('settings');
-  const s = Object.assign({}, DEF, settings || {});
+  const s = Object.assign({}, DEF, migrateSettings(settings));
   TEXT.forEach((k) => { $(k).value = s[k] ?? ''; });
   BOOL.forEach((k) => { $(k).checked = !!s[k]; });
-  $('runTime').value = `${String(s.runHour).padStart(2, '0')}:${String(s.runMinute).padStart(2, '0')}`;
+  $('runTime1').value = s.runTimes[0] || '10:00';
+  $('runTime2').value = s.runTimes[1] || '12:00';
+  $('runTime3').value = s.runTimes[2] || '16:00';
   if (s.passphrase) { $('passphrase').placeholder = '(saved — leave blank to keep)'; $('passphrase2').placeholder = '(saved)'; }
 }
 
 $('save').onclick = async () => {
   const { settings } = await chrome.storage.local.get('settings');
-  const s = Object.assign({}, DEF, settings || {});
+  const s = Object.assign({}, DEF, migrateSettings(settings));
   TEXT.forEach((k) => { s[k] = $(k).value.trim(); });
   s.pdfChunk = Math.max(5, Number(s.pdfChunk) || 40);
   s.backlogBatch = Math.min(100, Math.max(10, Number(s.backlogBatch) || 100));
   BOOL.forEach((k) => { s[k] = $(k).checked; });
-  const [h, m] = ($('runTime').value || '10:00').split(':').map(Number);
-  s.runHour = h; s.runMinute = m;
+  s.runTimes = [
+    $('runTime1').value || '10:00',
+    $('runTime2').value || '12:00',
+    $('runTime3').value || '16:00'
+  ];
+  delete s.runHour;
+  delete s.runMinute;
   s.nsOrigin = s.nsOrigin.replace(/\/+$/, '');
   const p1 = $('passphrase').value, p2 = $('passphrase2').value;
   if (p1 || p2) {
@@ -53,4 +78,5 @@ $('runNow').onclick = async () => {
   const r = await chrome.runtime.sendMessage({ type: 'runNow' });
   msg(r.started ? 'Run started. Watch progress in the toolbar popup.' : `Not started: ${r.reason}`, !!r.started);
 };
-load();
+if (typeof document !== 'undefined') load();
+if (typeof module !== 'undefined' && module.exports) module.exports = { DEF, migrateSettings };

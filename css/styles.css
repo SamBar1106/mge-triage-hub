@@ -444,3 +444,89 @@ a:hover { color: rgb(56, 189, 248); }
 .drop-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:9999;
   background:rgba(2,6,23,0.75); color:#e2e8f0; font-size:20px; font-weight:700; border:3px dashed #38bdf8; }
 .drop-overlay.show { display:flex; }
+
+/* Passphrase modal and forget button */
+.btn-forget-passphrase {
+  display: inline-block;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 4px;
+}
+.btn-forget-passphrase:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+.passphrase-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.passphrase-modal-box {
+  background: var(--header-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  color: var(--text-primary);
+}
+.passphrase-modal-title {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.passphrase-modal-box p {
+  margin: 0 0 16px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.passphrase-modal-box input[type="password"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+}
+.passphrase-modal-box input[type="password"]:focus {
+  border-color: var(--accent-blue);
+}
+.remember-me-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-primary);
+}
+.remember-me-note {
+  margin: 6px 0 0 0 !important;
+  font-size: 11px !important;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.passphrase-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+

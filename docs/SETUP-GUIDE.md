@@ -1,8 +1,29 @@
 # MGE Nightly Scraper: Setup Guide (Windows + Chrome)
 
-This guide sets up the office Windows computer so that **every day at 10:00 AM** Chrome collects the NetSuite data, locks (encrypts) it, and sends it to GitHub. The dashboard then shows fresh numbers every day.
+This guide sets up the office Windows computer so that **every day at 10:00 AM, 12:00 PM, and 4:00 PM** Chrome collects the NetSuite data, locks (encrypts) it, and sends it to GitHub. The 10:00 AM run always runs; the 12:00 PM and 4:00 PM runs are automated retries that automatically skip if a successful run already finished today. The dashboard then shows fresh numbers every day.
 
-> **Already set up?** A PC that is already set up must reload the extension at `chrome://extensions` (click the ↻ reload icon on the extension card), check that Settings shows `10:00`, and re-run `Register-MGEChromeTask.ps1`.
+---
+
+## Updating an already-installed PC
+
+Since Git is not installed on the boss PC, update using Windows PowerShell:
+
+1. Open **Windows PowerShell** (normal user, do NOT run as administrator) and run:
+   ```powershell
+   Invoke-WebRequest https://github.com/SamBar1106/mge-triage-hub/archive/refs/heads/main.zip -OutFile C:\MGE\mge.zip; Expand-Archive C:\MGE\mge.zip -DestinationPath C:\MGE -Force
+   ```
+   This downloads the latest ZIP to `C:\MGE` and overwrites `C:\MGE\mge-triage-hub-main`.
+2. In Chrome, go to `chrome://extensions` and click the **↻ reload** icon on the "MGE Nightly NetSuite Scraper" card.
+3. Click the extension icon, choose **Settings**, verify that the three run times display **`10:00`**, **`12:00`**, and **`16:00`**, and click **Save**.
+4. In PowerShell, re-run the scheduled task installer:
+   ```powershell
+   cd C:\MGE\mge-triage-hub-main\scripts\windows
+   powershell -ExecutionPolicy Bypass -File .\Register-MGEChromeTask.ps1
+   ```
+   Verify that it prints the 3 daily times: `Registered 'MGE - Ensure Chrome Running' daily at 09:55, 11:55, 15:55...`.
+5. Open the dashboard (https://sambar1106.github.io/mge-triage-hub/) and enter the team passphrase. Optionally tick **"Remember me on this computer"** so you do not have to re-enter it on this PC. (Use the visible "Forget saved passphrase" button any time to clear it).
+
+---
 
 Setup takes about 20 minutes, once. After that, the only daily task is to **leave the computer on with Chrome and NetSuite logged in.**
 
@@ -64,7 +85,7 @@ Pick **one** of these:
 
 1. Click the extension icon, then **Settings**. You can also right-click the icon and choose **Options**.
 2. Check or fill in:
-   - **Daily run time:** `10:00`
+   - **Daily run times:** `10:00`, `12:00`, and `16:00` (Run 1: 10:00 AM always runs; Run 2: 12:00 PM and Run 3: 4:00 PM skip if already succeeded).
    - **NetSuite address:** `https://3940793.app.netsuite.com`. This is already filled in.
    - **Saved search ID:** `72`. This is the "Active Client List" search.
    - Leave all three scrapers ticked.
@@ -79,7 +100,7 @@ The token and passphrase are stored only inside this Chrome profile on this comp
 
 ## Step 5: Make sure Chrome is open for the run (one-time PowerShell command)
 
-The extension can only run while Chrome is open. This step adds a Windows scheduled task that opens Chrome at **9:55 AM** if it is closed. If Chrome is already open, the task does nothing.
+The extension can only run while Chrome is open. This step adds a Windows scheduled task that opens Chrome at **9:55 AM, 11:55 AM, and 3:55 PM** if it is closed. If Chrome is already open, the task does nothing.
 
 1. Open the **Start** menu, type **PowerShell**, and open **Windows PowerShell**. Do **not** choose "Run as administrator"; the task must run as you.
 2. Run the following, adjusting the folder name if yours is different:
@@ -87,7 +108,7 @@ The extension can only run while Chrome is open. This step adds a Windows schedu
    cd C:\MGE\mge-triage-hub-main\scripts\windows
    powershell -ExecutionPolicy Bypass -File .\Register-MGEChromeTask.ps1
    ```
-   It should print *"Registered 'MGE - Ensure Chrome Running' daily at 09:55 …"*.
+   It should print *"Registered 'MGE - Ensure Chrome Running' daily at 09:55, 11:55, 15:55 …"*.
 3. Optional test: close Chrome, then run `Start-ScheduledTask -TaskName 'MGE - Ensure Chrome Running'`. Chrome should open.
 
 - If you use a Chrome profile other than the first one, add `-ProfileDirectory "Profile 1"` (see `chrome://version`, "Profile Path").
@@ -99,7 +120,7 @@ The extension can only run while Chrome is open. This step adds a Windows schedu
 - **Stay signed in to Windows.** Locking the screen (Windows+L) is fine. **Do not sign out or shut down.**
 - **Power settings:** open Start, then **Settings → System → Power & battery (or Power & sleep) → Screen and sleep**.
   - "When plugged in, put my device to sleep after": **Never** (recommended),
-  - or leave sleep on. The setup script turns on *wake timers* so the 9:55 AM task can wake the PC. If it printed a warning, open Control Panel → Power Options → Change plan settings → Change advanced power settings → **Sleep → Allow wake timers → Enable**.
+  - or leave sleep on. The setup script turns on *wake timers* so the 9:55 AM, 11:55 AM, and 3:55 PM tasks can wake the PC. If it printed a warning, open Control Panel → Power Options → Change plan settings → Change advanced power settings → **Sleep → Allow wake timers → Enable**.
   - Laptops: keep them **plugged in** with the lid open, or set "When I close the lid" to *Do nothing*.
 - **Chrome:** Settings → System → turn on **"Continue running background apps when Google Chrome is closed."**
 - **NetSuite:** stay logged in. Leaving a NetSuite tab open is fine. If NetSuite logs you out overnight, the run stops safely, nothing is overwritten, and you'll see a notification in the morning.
@@ -110,11 +131,11 @@ The extension can only run while Chrome is open. This step adds a Windows schedu
 - The files are saved **encrypted** in GitHub at `data/enc/`:
   `clients_directory.csv.enc`, `pdf_directory.csv.enc`, `unscheduled_backlog.csv.enc`, `doctor_owner_zero_dates_summary.csv.enc`, plus `last_run.json`. `last_run.json` holds only times and row counts, no client data.
 - GitHub Pages republishes the dashboard about **1 minute** after the upload.
-- Open the dashboard at https://sambar1106.github.io/mge-triage-hub/ and enter the team passphrase when asked. It is asked once per browser session.
+- Open the dashboard at https://sambar1106.github.io/mge-triage-hub/ and enter the team passphrase when asked. You can tick **"Remember me on this computer"** so you do not have to re-enter it on trusted computers. To forget it, click the small visible **"Forget saved passphrase"** button.
 - Under the "Scheduling Hub" title, look for **"Data updated <date, time>"**:
   - green **"Data updated Sep 29, 2:47 AM"**: last night's run worked.
   - red **"Last scrape failed … · data from …"**: the dashboard is showing the last good data. See Troubleshooting.
-- You can check the extension itself any time: click its icon to see the last run, the row counts, and the next scheduled run. Click **Run now** to run immediately.
+- You can check the extension itself any time: click its icon to see the last run, individual progress bars for each scraper (Client list, PDF schedules, Unscheduled backlog, plus Upload) showing status, step, and start time, and the next scheduled run. Click **Run now** to run immediately.
 
 ## Failure alerts (GitHub issue + Antigravity)
 
@@ -124,13 +145,13 @@ Antigravity (Google's agentic IDE) has no notification API, so failures are flag
   1. Opens a GitHub issue titled **"MGE scraper failed <date>"** with the label `scraper-failure`, the time (Chicago time) and the error code. A second failure the same day adds a comment to that issue instead of opening a new one.
   2. Commits **`ANTIGRAVITY_ALERT.md`** to the repo root. It contains the time, the error, a link to the issue, the files most likely to need fixing, and how to test.
      `AGENTS.md` tells Antigravity (and other coding agents) to read that file first and help fix the scraper before anything else.
-- **At 11:00 AM Chicago time, if no run happened that day** (the PC or Chrome was off, or the alarm never fired), it raises the same alert with the error `NO_RUN_TODAY`.
+- **At 5:00 PM Chicago time, if no run happened that day** (the PC or Chrome was off, or the alarms never fired), it raises the same alert with the error `NO_RUN_TODAY`.
 - **After the next successful run,** it deletes `ANTIGRAVITY_ALERT.md` and closes the open `scraper-failure` issue with a comment.
 
 To get emails, click **Watch** on the repository (Custom → Issues) on GitHub. Alerts contain error codes and times only, never client data.
-You can run the 11 AM check by hand: GitHub → **Actions** → "Scraper notify" → **Run workflow**, and type `fallback`.
+You can run the 5 PM check by hand: GitHub → **Actions** → "Scraper notify" → **Run workflow**, and type `fallback`.
 
-> Until the extension is installed and its first run succeeds, the 11 AM check will open a `NO_RUN_TODAY` issue each day. That's expected.
+> Until the extension is installed and its first run succeeds, the 5 PM check will open a `NO_RUN_TODAY` issue each day. That's expected.
 
 ---
 

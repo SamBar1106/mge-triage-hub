@@ -3,12 +3,26 @@
      user to yourself and the path in <Arguments> if you did not run the .ps1 installer. -->
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Starts Chrome (normal profile) before the MGE nightly NetSuite scrape at 10:00 AM.</Description>
+    <Description>Starts Chrome (normal profile) before the MGE NetSuite scrapes at 10:00 AM, 12:00 PM, and 4:00 PM.</Description>
     <URI>\MGE - Ensure Chrome Running</URI>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>
       <StartBoundary>2026-01-01T09:55:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2026-01-01T11:55:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2026-01-01T15:55:00</StartBoundary>
       <Enabled>true</Enabled>
       <ScheduleByDay>
         <DaysInterval>1</DaysInterval>

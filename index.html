@@ -16,6 +16,7 @@
     <div class="header-left">
       <h1>Scheduling Hub</h1>
       <span id="data-updated" class="data-updated"></span>
+      <button id="btn-forget-passphrase" class="btn-forget-passphrase" title="Clear saved passphrase and reload">Forget saved passphrase</button>
     </div>
     
     <!-- Compact KPIs directly in header for max vertical space -->
@@ -117,6 +118,25 @@
   </main>
 
   <div id="drop-overlay" class="drop-overlay"><div>Drop CSV or .csv.enc files to load them</div></div>
+
+  <!-- Passphrase Prompt Modal -->
+  <div id="passphrase-modal" class="passphrase-modal" style="display:none;">
+    <div class="passphrase-modal-box">
+      <h3 class="passphrase-modal-title">Enter Team Passphrase</h3>
+      <p id="passphrase-prompt-message">Enter the team passphrase to unlock client data:</p>
+      <form id="passphrase-form">
+        <input type="password" id="passphrase-input" placeholder="Passphrase" autocomplete="current-password" required />
+        <label class="remember-me-label">
+          <input type="checkbox" id="remember-me-checkbox" />
+          <span>Remember me on this computer</span>
+        </label>
+        <p class="remember-me-note">Only on a computer you trust. Anyone who uses this browser profile can open the dashboard.</p>
+        <div class="passphrase-modal-actions">
+          <button type="submit" id="btn-passphrase-submit" class="ios-btn">Unlock</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="js/mge-crypto.js?v=1"></script>
   <script src="js/mge-buckets.js?v=1"></script>
