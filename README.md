@@ -6,6 +6,7 @@ MGE Training Scheduling & Triage Hub (static site, GitHub Pages).
 - `extension/`: Chrome extension that scrapes NetSuite nightly and pushes the encrypted CSVs.
 - `scripts/windows/`: one-time Task Scheduler setup that makes sure Chrome is open at 1:55 AM.
 - `docs/SETUP-GUIDE.md`: step-by-step setup and troubleshooting.
+- `.github/workflows/scraper-notify.yml` + `AGENTS.md`: failure alerts (a `scraper-failure` issue and `ANTIGRAVITY_ALERT.md` for Antigravity/agents).
 - `tests/`: offline verification harness (`cd tests && npm install && npm test`).
 
 Plaintext client data (`data/*.csv`) and saved NetSuite pages (`scrapers/fixtures/*.html`) are gitignored and must never be committed.

@@ -306,6 +306,56 @@ async function main() {
     check('schedule: after 2:00 -> next day 2:00', new Date(nextRunTime(2, 0, at('2026-09-28T02:00:01'))).getDate() === 29);
   }
 
+  // ---------------- 10. Antigravity / GitHub failure-alert workflow logic ----------------
+  {
+    const notify = require(path.join(ROOT, '.github/scripts/scraper-notify.js'));
+    const os = require('os');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mge-notify-'));
+    fs.mkdirSync(path.join(tmp, 'data/enc'), { recursive: true });
+    const writeStatus = (o) => fs.writeFileSync(path.join(tmp, 'data/enc/last_run.json'), JSON.stringify(o));
+    const issues = []; const calls = [];
+    const fakeFetch = async (url, init) => {
+      const u = new URL(url); const p = u.pathname.replace(/^\/repos\/[^/]+\/[^/]+/, ''); const m = init.method; const body = init.body ? JSON.parse(init.body) : null;
+      calls.push(`${m} ${p}`);
+      const res = (status, j) => ({ ok: status < 300, status, json: async () => j });
+      if (m === 'POST' && p === '/labels') return res(422, {});
+      if (m === 'GET' && p === '/issues') return res(200, issues.filter((i) => i.state === 'open'));
+      if (m === 'POST' && p === '/issues') { const i = { number: issues.length + 1, title: body.title, state: 'open', comments: 0, html_url: `https://github.com/x/y/issues/${issues.length + 1}`, body: body.body }; issues.push(i); return res(201, i); }
+      let mm;
+      if (m === 'POST' && (mm = p.match(/^\/issues\/(\d+)\/comments$/))) { issues[mm[1] - 1].comments++; issues[mm[1] - 1].lastComment = body.body; return res(201, {}); }
+      if (m === 'PATCH' && (mm = p.match(/^\/issues\/(\d+)$/))) { issues[mm[1] - 1].state = body.state; return res(200, {}); }
+      return res(404, {});
+    };
+    const base = { root: tmp, fetch: fakeFetch, repo: 'x/y', token: 't', log: () => {} };
+    const alertFile = path.join(tmp, 'ANTIGRAVITY_ALERT.md');
+    const t1 = new Date('2026-09-29T07:10:00Z'); // 2:10 AM CDT
+    writeStatus({ ok: false, finishedAt: t1.toISOString(), errors: ['NOT_LOGGED_IN', 'oops jane@example.com 555-123-4567 https://x.y/z'] });
+    let r = await notify.run({ ...base, event: 'push', now: t1 });
+    const md1 = fs.existsSync(alertFile) ? rd(alertFile) : '';
+    check('notify: failure -> issue created with Chicago-date title + label', r.decision === 'alert' && issues.length === 1 && issues[0].title === 'MGE scraper failed 2026-09-29');
+    check('notify: failure -> ANTIGRAVITY_ALERT.md written with time, error, issue link, files, test cmd',
+      /2:10 AM CDT/.test(md1) && md1.includes('NOT_LOGGED_IN') && md1.includes(issues[0].html_url) && md1.includes('extension/scrapers/') && md1.includes('extension/background.js') && md1.includes('tests/run-tests.js'));
+    check('notify: no email/phone/URL leaks into alert or issue', !/@example\.com|555-123-4567|x\.y\/z/.test(md1 + issues[0].body));
+    r = await notify.run({ ...base, event: 'push', now: new Date('2026-09-29T08:00:00Z') });
+    check('notify: second failure same Chicago day -> comment, not a new issue', issues.length === 1 && issues[0].comments === 1);
+    writeStatus({ ok: true, finishedAt: new Date('2026-09-29T09:00:00Z').toISOString(), errors: [] });
+    r = await notify.run({ ...base, event: 'push', now: new Date('2026-09-29T09:00:00Z') });
+    check('notify: success -> alert file deleted + issue closed with comment', !fs.existsSync(alertFile) && issues[0].state === 'closed' && /succeeded/.test(issues[0].lastComment) && r.closed === 1);
+    // 11 AM fallback: last run was yesterday
+    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T16:00:00Z') }); // 11 AM CDT
+    check('notify: 11 AM fallback with no run today -> NO_RUN_TODAY issue + alert file', r.decision === 'alert' && issues.length === 2 && issues[1].title === 'MGE scraper failed 2026-09-30' && rd(alertFile).includes('NO_RUN_TODAY'));
+    const n = calls.length;
+    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T17:00:00Z') }); // noon CDT -> other cron entry
+    check('notify: DST twin cron at 12 PM Chicago is skipped', r.decision === 'skip' && calls.length === n);
+    writeStatus({ ok: true, finishedAt: new Date('2026-09-30T07:30:00Z').toISOString(), errors: [] });
+    fs.unlinkSync(alertFile); const before = issues.length;
+    r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T16:00:00Z') });
+    check('notify: 11 AM fallback with a good run today -> noop', r.decision === 'noop' && issues.length === before && !fs.existsSync(alertFile));
+    const wf = rd([path.join(ROOT, '.github/workflows/scraper-notify.yml'), path.join(ROOT, 'scripts/github/scraper-notify.yml')].find((p) => fs.existsSync(p)));
+    check('workflow: paths filter only last_run.json; issues+contents write perms', /paths:\s*\n\s*- data\/enc\/last_run\.json/.test(wf) && !/ANTIGRAVITY_ALERT\.md\s*\n\s*schedule/.test(wf) && /issues: write/.test(wf) && /contents: write/.test(wf));
+    check('AGENTS.md has the Antigravity rule', /If `ANTIGRAVITY_ALERT\.md` exists.*read it first and help fix the failing scraper before anything else/.test(rd(path.join(ROOT, 'AGENTS.md'))));
+  }
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed (${results.filter((r) => r.skipped).length} skipped).`);
   process.exit(failed.length ? 1 : 0);

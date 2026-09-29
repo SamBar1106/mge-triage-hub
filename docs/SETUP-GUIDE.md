@@ -114,6 +114,22 @@ The extension can only run while Chrome is open. This step adds a Windows schedu
   - red **"Last scrape failed … · data from …"**: the dashboard is showing the last good data. See Troubleshooting.
 - You can check the extension itself any time: click its icon to see the last run, the row counts, and the next scheduled run. Click **Run now** to run immediately.
 
+## Failure alerts (GitHub issue + Antigravity)
+
+Antigravity (Google's agentic IDE) has no notification API, so failures are flagged inside the repo itself. The workflow `.github/workflows/scraper-notify.yml` runs automatically:
+
+- **When a run fails.** The extension uploads `data/enc/last_run.json` with a failure status, and the workflow:
+  1. Opens a GitHub issue titled **"MGE scraper failed <date>"** with the label `scraper-failure`, the time (Chicago time) and the error code. A second failure the same day adds a comment to that issue instead of opening a new one.
+  2. Commits **`ANTIGRAVITY_ALERT.md`** to the repo root. It contains the time, the error, a link to the issue, the files most likely to need fixing, and how to test.
+     `AGENTS.md` tells Antigravity (and other coding agents) to read that file first and help fix the scraper before anything else.
+- **At 11:00 AM Chicago time, if no run happened that day** (the PC or Chrome was off, or the alarm never fired), it raises the same alert with the error `NO_RUN_TODAY`.
+- **After the next successful run,** it deletes `ANTIGRAVITY_ALERT.md` and closes the open `scraper-failure` issue with a comment.
+
+To get emails, click **Watch** on the repository (Custom → Issues) on GitHub. Alerts contain error codes and times only, never client data.
+You can run the 11 AM check by hand: GitHub → **Actions** → "Scraper notify" → **Run workflow**, and type `fallback`.
+
+> Until the extension is installed and its first run succeeds, the 11 AM check will open a `NO_RUN_TODAY` issue each day. That's expected.
+
 ---
 
 ## Troubleshooting
