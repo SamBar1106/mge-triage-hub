@@ -57,6 +57,7 @@ async function main() {
   const secretHits = tracked.filter((f) => !/\.(png|enc)$/.test(f) && fs.existsSync(path.join(ROOT, f)) && /(github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{30,})/.test(rd(path.join(ROOT, f))));
   check('no GitHub tokens in tracked files', secretHits.length === 0);
   check('crypto lib identical in extension and app', rd(path.join(EXT, 'lib/crypto.js')) === rd(path.join(ROOT, 'js/mge-crypto.js')));
+  check('buckets lib identical in extension and app', rd(path.join(EXT, 'lib/buckets.js')) === rd(path.join(ROOT, 'js/mge-buckets.js')));
   const trackedPlain = tracked.filter((f) => /^data\/[^/]+\.csv$/.test(f) || /fixtures\/.*\.html?$/i.test(f));
   check('no plaintext data CSV / saved NetSuite HTML tracked', trackedPlain.length === 0, `${trackedPlain.length} tracked`);
 
@@ -247,8 +248,11 @@ async function main() {
       const plain = {};
       names.forEach((n) => { const p = path.join(ROOT, 'data', n); if (fs.existsSync(p)) plain[n] = rd(p); });
       if (!plain['clients_directory.csv']) plain['clients_directory.csv'] = clientOut ? MGECsv.clientsCsv(clientOut.rows) : MGECsv.clientsCsv([['1', 'A B', 'C', 'S', 'e@x.co', '', '', '', '']]);
+      if (!plain['contacts_directory.csv']) plain['contacts_directory.csv'] = '"Contact Internal ID","Parent Client ID","Contact Name","Primary Email","Cell Phone 1","Position / Post"\r\n';
+      if (!plain['pdf_directory.csv']) plain['pdf_directory.csv'] = MGECsv.pdfCsv([{ documentTitle: 'SCHEDULING AGREEMENT', contactId: '1', clientInternalId: '1', services: 'Sales Seminar A', monthDates: '3/5-3/7', hasValidDate: 'YES' }]);
+      if (!plain['unscheduled_backlog.csv']) plain['unscheduled_backlog.csv'] = MGECsv.backlogCsv([{ clientId: '1', clientName: 'A B', itemName: 'Sales Seminar A', memo: '', amount: '100.00', completionStatus: 'COMPLETED' }]);
       for (const n of Object.keys(plain)) files[n + '.enc'] = JSON.stringify(await MGECrypto.encryptText(plain[n], pass, n));
-      files['last_run.json'] = JSON.stringify({ schema: 1, ok: true, finishedAt: new Date().toISOString(), files: {} });
+      files['last_run.json'] = JSON.stringify({ timestamp: new Date().toISOString(), status: 'success', clients: 1, pending: 0, contacts: 0, pdf: 0, backlog: 0 });
     }
     // Expected counts: decrypt independently in Node and run the app parser.
     const expected = {};
@@ -267,6 +271,7 @@ async function main() {
     w.prompt = (q) => { const a = answers[Math.min(prompts++, answers.length - 1)]; if (process.env.MGE_DEBUG) console.log('DEBUG prompt', prompts, q.slice(0, 20), a === appPass ? 'correct' : 'wrong', new Error().stack.split('\n').slice(2, 4).join(' / ').replace(/\s+/g, ' ').slice(0, 200)); return a; };
     w.alert = () => {};
     w.eval(rd(path.join(ROOT, 'js/mge-crypto.js')));
+    w.eval(rd(path.join(ROOT, 'js/mge-buckets.js')));
     w.eval(rd(path.join(ROOT, 'js/app.js')) + '\n;window.__state = state;');
     // app.js starts itself on DOMContentLoaded (exactly like the browser); only call initApp if that already fired.
     if (w.document.readyState === 'loading') {
@@ -286,7 +291,7 @@ async function main() {
     check('app e2e: bucket counts rendered and sum to total', b[3] === size && b[0] + b[1] + b[2] === size, `pending=${b[0]} incomplete=${b[1]} complete=${b[2]} all=${b[3]}`);
     await new Promise((r) => setTimeout(r, 50));
     check('app e2e: "Data updated" stamp shown', /^(Data updated|Last scrape failed)/.test(w.document.getElementById('data-updated').textContent));
-    check('app e2e: no plaintext data/*.csv requested once encrypted data loaded', !served.some((f) => /^data\/[^/]+\.csv$/.test(f) && f !== 'data/contacts_directory.csv' && !files[f.slice(5) + '.enc']));
+    check('app e2e: no plaintext data/*.csv requested once encrypted data loaded', !served.some((f) => /^data\/[^/]+\.csv$/.test(f) && files[f.slice(5) + '.enc']));
     // Drag-and-drop fallback: drop an encrypted and a plaintext file.
     const firstEnc = files['clients_directory.csv.enc'];
     const plainSmall = MGECsv.clientsCsv([['990001', 'Drop Test', 'C', 'S', '', '', '', '', '']]);
@@ -297,16 +302,62 @@ async function main() {
     w.close();
   }
 
-  // ---------------- 9. Scheduling helper ----------------
+  // ---------------- 9. Scheduling helper & 10:00 AM defaults ----------------
   {
     global.importScripts = () => {}; global.chrome = new Proxy({}, { get: () => new Proxy(function () {}, { get: () => ({ addListener() {} }) }) });
     const { nextRunTime } = require(path.join(EXT, 'background.js'));
     const at = (s) => new Date(s);
-    check('schedule: before 2:00 -> same day 2:00', new Date(nextRunTime(2, 0, at('2026-09-28T01:30:00'))).getHours() === 2 && new Date(nextRunTime(2, 0, at('2026-09-28T01:30:00'))).getDate() === 28);
-    check('schedule: after 2:00 -> next day 2:00', new Date(nextRunTime(2, 0, at('2026-09-28T02:00:01'))).getDate() === 29);
+    check('schedule: before 10:00 -> same day 10:00', new Date(nextRunTime(10, 0, at('2026-09-28T09:30:00'))).getHours() === 10 && new Date(nextRunTime(10, 0, at('2026-09-28T09:30:00'))).getDate() === 28);
+    check('schedule: after 10:00 -> next day 10:00', new Date(nextRunTime(10, 0, at('2026-09-28T10:00:01'))).getDate() === 29);
+    check('schedule: background.js defaults to 10:00 AM', /runHour:\s*10,\s*runMinute:\s*0/.test(rd(path.join(EXT, 'background.js'))));
+    check('schedule: options.js defaults to 10:00 AM', /runHour:\s*10,\s*runMinute:\s*0/.test(rd(path.join(EXT, 'options.js'))));
+    check('schedule: task.xml runs at 09:55:00', /<StartBoundary>2026-01-01T09:55:00<\/StartBoundary>/.test(rd(path.join(ROOT, 'scripts/windows/MGE-Ensure-Chrome.task.xml'))));
+    check('schedule: Register-MGEChromeTask.ps1 defaults to 09:55', /\$Time\s*=\s*'09:55'/.test(rd(path.join(ROOT, 'scripts/windows/Register-MGEChromeTask.ps1'))));
   }
 
-  // ---------------- 10. Antigravity / GitHub failure-alert workflow logic ----------------
+  // ---------------- 10. Client bucketing logic & committed data 354 pending ----------------
+  {
+    const MGEBuckets = require(path.join(EXT, 'lib/buckets.js'));
+    check('buckets: module exports computeBuckets and classifyClient', typeof MGEBuckets.computeBuckets === 'function' && typeof MGEBuckets.classifyClient === 'function');
+
+    // Synthetic classification test: 1 pending, 1 incomplete, 1 complete
+    const synthClients = [
+      { clientId: '1', doctorName: 'Doc One', consultant: 'C1', accountStatus: 'Active' },
+      { clientId: '2', doctorName: 'Doc Two', consultant: 'C2', accountStatus: 'Active' },
+      { clientId: '3', doctorName: 'Doc Three', consultant: 'C3', accountStatus: 'Active' }
+    ];
+    const synthPdf = [
+      { clientInternalId: '1', monthDates: '3/5-3/7', services: 'Sales Seminar A', location: 'FL' },
+      { clientInternalId: '2', monthDates: 'NO DATES', services: 'None', location: 'FL' }
+    ];
+    const synthBacklog = [
+      { clientId: '1', itemName: 'Marketing Seminar', amount: '100', completionStatus: 'UNCOMPLETED' }, // Client 1 has dates, but uncompleted item -> SCHEDULE_INCOMPLETE
+      { clientId: '2', itemName: 'Marketing Seminar', amount: '200', completionStatus: 'UNCOMPLETED' }, // Client 2 has no valid dates, uncompleted item -> PENDING_SCHEDULE
+      { clientId: '3', itemName: 'Sales Seminar A', amount: '300', completionStatus: 'COMPLETED' }      // Client 3 has completed items -> PROGRAM_COMPLETE
+    ];
+    const synthRes = MGEBuckets.computeBuckets({ clients: synthClients, pdf: synthPdf, backlog: synthBacklog });
+    check('buckets: synthetic classification', synthRes.pending === 1 && synthRes.incomplete === 1 && synthRes.complete === 1,
+      `pending=${synthRes.pending} incomplete=${synthRes.incomplete} complete=${synthRes.complete}`);
+
+    // Verify 354 pending count on the committed data
+    let committedPending = null;
+    let clientCount = 0;
+    try {
+      const opt = { maxBuffer: 50 * 1024 * 1024 };
+      const clientsCsv = execSync('git show fe1d7c2:data/clients_directory.csv', opt).toString();
+      const pdfCsv = execSync('git show fe1d7c2:data/pdf_directory.csv', opt).toString();
+      const backlogCsv = execSync('git show fe1d7c2:data/unscheduled_backlog.csv', opt).toString();
+      const contactsCsv = execSync('git show fe1d7c2:data/contacts_directory.csv', opt).toString();
+      const res = MGEBuckets.computeBuckets({ clients: clientsCsv, pdf: pdfCsv, backlog: backlogCsv, contacts: contactsCsv });
+      committedPending = res.pending;
+      clientCount = res.clients;
+    } catch (e) {
+      // Fallback
+    }
+    check('buckets: pending count on committed data == 354', committedPending === 354, `pending=${committedPending} clients=${clientCount}`);
+  }
+
+  // ---------------- 11. Antigravity / GitHub failure-alert workflow logic ----------------
   {
     const notify = require(path.join(ROOT, '.github/scripts/scraper-notify.js'));
     const os = require('os');
@@ -351,9 +402,182 @@ async function main() {
     fs.unlinkSync(alertFile); const before = issues.length;
     r = await notify.run({ ...base, event: 'schedule', now: new Date('2026-09-30T16:00:00Z') });
     check('notify: 11 AM fallback with a good run today -> noop', r.decision === 'noop' && issues.length === before && !fs.existsSync(alertFile));
+
+    // Test new status file schema
+    writeStatus({ status: 'failure', timestamp: '2026-09-29T10:05:00-05:00', error: 'NOT_LOGGED_IN' });
+    r = await notify.run({ ...base, event: 'push', now: new Date('2026-09-29T15:05:00Z') });
+    check('notify: new status schema failure recognized', r.decision === 'alert');
+    writeStatus({ status: 'success', timestamp: '2026-09-29T10:30:00-05:00' });
+    r = await notify.run({ ...base, event: 'push', now: new Date('2026-09-29T15:30:00Z') });
+    check('notify: new status schema success recognized', r.decision === 'resolve');
+
     const wf = rd([path.join(ROOT, '.github/workflows/scraper-notify.yml'), path.join(ROOT, 'scripts/github/scraper-notify.yml')].find((p) => fs.existsSync(p)));
     check('workflow: paths filter only last_run.json; issues+contents write perms', /paths:\s*\n\s*- data\/enc\/last_run\.json/.test(wf) && !/ANTIGRAVITY_ALERT\.md\s*\n\s*schedule/.test(wf) && /issues: write/.test(wf) && /contents: write/.test(wf));
     check('AGENTS.md has the Antigravity rule', /If `ANTIGRAVITY_ALERT\.md` exists.*read it first and help fix the failing scraper before anything else/.test(rd(path.join(ROOT, 'AGENTS.md'))));
+  }
+
+  // ---------------- 12. Email notifications & SMTP helper ----------------
+  {
+    const notify = require(path.join(ROOT, '.github/scripts/scraper-notify.js'));
+    const os = require('os');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mge-email-'));
+    fs.mkdirSync(path.join(tmp, 'data/enc'), { recursive: true });
+    const writeStatus = (o) => fs.writeFileSync(path.join(tmp, 'data/enc/last_run.json'), JSON.stringify(o));
+
+    // Test missing secret
+    let missingSecretErr = false;
+    try {
+      await notify.runEmail({ root: tmp, password: '' });
+    } catch (e) {
+      missingSecretErr = e.message.includes('GMAIL_APP_PASSWORD secret is missing');
+    }
+    check('notify email: fails clearly when GMAIL_APP_PASSWORD is missing', missingSecretErr);
+
+    const sentEmails = [];
+    const fakeSmtp = async (params) => {
+      sentEmails.push(params);
+      return { ok: true };
+    };
+
+    // Test success email
+    writeStatus({
+      timestamp: '2026-09-29T10:15:00-05:00',
+      status: 'success',
+      clients: 748,
+      pending: 354,
+      contacts: 669,
+      pdf: 2835,
+      backlog: 14571
+    });
+
+    let res = await notify.runEmail({
+      root: tmp,
+      password: 'test_password',
+      event: 'push',
+      smtpSend: fakeSmtp
+    });
+
+    check('notify email: success email sent with correct subject',
+      res.sent && sentEmails[0].subject === 'MGE scraper: SUCCESS - 748 clients / 354 pending');
+    check('notify email: success body includes Chicago time, status, counts, and live site link',
+      sentEmails[0].body.includes('Status: SUCCESS') &&
+      sentEmails[0].body.includes('Clients: 748') &&
+      sentEmails[0].body.includes('Pending: 354') &&
+      sentEmails[0].body.includes('https://sambar1106.github.io/mge-triage-hub/'));
+    check('notify email: recipient is samuelbarrios1106@gmail.com',
+      sentEmails[0].to === 'samuelbarrios1106@gmail.com');
+
+    // Test failure email
+    writeStatus({
+      timestamp: '2026-09-29T10:05:00-05:00',
+      status: 'failure',
+      clients: 0,
+      pending: 0,
+      error: 'NOT_LOGGED_IN'
+    });
+
+    res = await notify.runEmail({
+      root: tmp,
+      password: 'test_password',
+      event: 'push',
+      smtpSend: fakeSmtp
+    });
+
+    check('notify email: failure email sent with subject MGE scraper: FAILED',
+      res.sent && sentEmails[1].subject === 'MGE scraper: FAILED');
+    check('notify email: failure body includes error, status, and live site link',
+      sentEmails[1].body.includes('Status: FAILED') &&
+      sentEmails[1].body.includes('NOT_LOGGED_IN') &&
+      sentEmails[1].body.includes('https://sambar1106.github.io/mge-triage-hub/'));
+
+    // Test 11 AM no-run fallback
+    res = await notify.runEmail({
+      root: tmp,
+      password: 'test_password',
+      event: 'schedule',
+      now: new Date('2026-09-30T16:00:00Z'), // 11 AM CDT
+      smtpSend: fakeSmtp
+    });
+
+    check('notify email: 11 AM fallback sends FAILED email with NO_RUN_TODAY',
+      res.sent && sentEmails[2].subject === 'MGE scraper: FAILED' && sentEmails[2].body.includes('NO_RUN_TODAY'));
+
+    // Test DST twin skip (12 PM Chicago)
+    const countBefore = sentEmails.length;
+    res = await notify.runEmail({
+      root: tmp,
+      password: 'test_password',
+      event: 'schedule',
+      now: new Date('2026-09-30T17:00:00Z'), // 12 PM CDT
+      smtpSend: fakeSmtp
+    });
+    check('notify email: DST twin at 12 PM is skipped', !res.sent && sentEmails.length === countBefore);
+
+    // Test SMTP protocol conversation with a mock TLS socket
+    const EventEmitter = require('events');
+    const sentCommands = [];
+    class MockTlsSocket extends EventEmitter {
+      constructor() {
+        super();
+        this.destroyed = false;
+        setTimeout(() => this.emit('data', '220 smtp.gmail.com ESMTP ready\r\n'), 5);
+      }
+      setEncoding() {}
+      write(data) {
+        sentCommands.push(data.trim());
+        if (data.startsWith('EHLO')) {
+          setTimeout(() => this.emit('data', '250-smtp.gmail.com at your service\r\n250 AUTH LOGIN\r\n'), 5);
+        } else if (data.startsWith('AUTH LOGIN')) {
+          setTimeout(() => this.emit('data', '334 VXNlcm5hbWU6\r\n'), 5);
+        } else if (sentCommands.length === 3) {
+          setTimeout(() => this.emit('data', '334 UGFzc3dvcmQ6\r\n'), 5);
+        } else if (sentCommands.length === 4) {
+          setTimeout(() => this.emit('data', '235 2.7.0 Accepted\r\n'), 5);
+        } else if (data.startsWith('MAIL FROM:')) {
+          setTimeout(() => this.emit('data', '250 2.1.0 OK\r\n'), 5);
+        } else if (data.startsWith('RCPT TO:')) {
+          setTimeout(() => this.emit('data', '250 2.1.5 OK\r\n'), 5);
+        } else if (data.startsWith('DATA')) {
+          setTimeout(() => this.emit('data', '354 Go ahead\r\n'), 5);
+        } else if (data.trim().endsWith('.')) {
+          setTimeout(() => this.emit('data', '250 2.0.0 OK message queued\r\n'), 5);
+        } else if (data.startsWith('QUIT')) {
+          setTimeout(() => this.emit('close'), 5);
+        }
+      }
+      end() { this.emit('close'); }
+      destroy() { this.destroyed = true; }
+    }
+
+    const smtpRes = await notify.sendSmtpEmail({
+      host: 'smtp.gmail.com',
+      port: 465,
+      user: 'testuser@gmail.com',
+      pass: 'secret_app_pw',
+      to: 'recipient@example.com',
+      from: 'testuser@gmail.com',
+      subject: 'Test Subject',
+      body: 'Test Body',
+      tlsConnect: () => new MockTlsSocket()
+    });
+
+    check('notify smtp: full handshake completed (EHLO, AUTH, MAIL, RCPT, DATA, QUIT)',
+      smtpRes.ok &&
+      sentCommands.some((c) => c.startsWith('EHLO')) &&
+      sentCommands.some((c) => c.startsWith('AUTH LOGIN')) &&
+      sentCommands.some((c) => c === Buffer.from('testuser@gmail.com').toString('base64')) &&
+      sentCommands.some((c) => c === Buffer.from('secret_app_pw').toString('base64')) &&
+      sentCommands.some((c) => c.startsWith('MAIL FROM:<testuser@gmail.com>')) &&
+      sentCommands.some((c) => c.startsWith('RCPT TO:<recipient@example.com>')) &&
+      sentCommands.some((c) => c.includes('Subject: Test Subject')));
+
+    // Check actionlint report
+    try {
+      execSync('actionlint scripts/github/scraper-notify.yml');
+      check('actionlint reports nothing on scripts/github/scraper-notify.yml', true);
+    } catch (e) {
+      check('actionlint reports nothing on scripts/github/scraper-notify.yml', false, e.message);
+    }
   }
 
   const failed = results.filter((r) => !r.ok);

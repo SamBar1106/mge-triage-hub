@@ -61,3 +61,11 @@ jobs:
             sleep 5
           done
           exit 1
+
+      - name: Send email notification
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_MODE: ${{ github.event.inputs.mode }}
+        run: node .github/scripts/scraper-notify.js --email
+

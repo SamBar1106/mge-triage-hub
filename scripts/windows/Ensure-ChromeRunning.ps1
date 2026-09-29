@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
   Starts Google Chrome with the normal (default) profile if it is not already running.
-  Run by the "MGE - Ensure Chrome Running" scheduled task at 1:55 AM so the extension's
-  2:00 AM alarm can fire. It never closes or restarts an existing Chrome.
+  Run by the "MGE - Ensure Chrome Running" scheduled task at 9:55 AM so the extension's
+  10:00 AM alarm can fire. It never closes or restarts an existing Chrome.
 #>
 [CmdletBinding()]
 param(

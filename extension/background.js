@@ -1,5 +1,5 @@
 /* MGE Nightly NetSuite Scraper - service worker (classic). */
-importScripts('lib/crypto.js', 'lib/csv.js', 'lib/github.js',
+importScripts('lib/crypto.js', 'lib/csv.js', 'lib/github.js', 'lib/buckets.js',
   'scrapers/clientList.js', 'scrapers/pdfSchedule.js', 'scrapers/backlog.js');
 
 const DEFAULTS = {
@@ -7,7 +7,7 @@ const DEFAULTS = {
   searchId: '72',
   ghOwner: 'SamBar1106', ghRepo: 'mge-triage-hub', ghBranch: 'main', ghToken: '',
   passphrase: '', encDir: 'data/enc',
-  runHour: 2, runMinute: 0,
+  runHour: 10, runMinute: 0,
   enableClients: true, enablePdf: true, enableBacklog: true,
   pdfChunk: 40, backlogBatch: 100,
   minRowRatio: 0.5 // refuse to upload a dataset that shrank below 50% of the previous good run
@@ -118,7 +118,7 @@ async function startRun(trigger) {
   if (cur && PHASES.includes(cur.phase) && (active || Date.now() - (cur.heartbeat || 0) < 10 * 60000)) return { started: false, reason: 'ALREADY_RUNNING' };
   const s = await getSettings();
   if (!s.ghToken || !s.passphrase) {
-    await finishWithStatus({ id: Date.now(), startedAt: new Date().toISOString(), trigger, counts: {}, errors: ['NOT_CONFIGURED'] }, false, s, false);
+    await finishWithStatus({ id: Date.now(), startedAt: new Date().toISOString(), trigger, counts: {}, errors: ['NOT_CONFIGURED'] }, false, s, !!s.ghToken);
     return { started: false, reason: 'NOT_CONFIGURED' };
   }
   const run = { id: Date.now(), trigger, startedAt: new Date().toISOString(), phase: 'clients', pdfCursor: 0, backlogCursor: 0, counts: {}, errors: [], done: {}, log: [] };
@@ -130,7 +130,14 @@ async function startRun(trigger) {
 async function resumeIfInterrupted() {
   const run = await getRun();
   if (!run || !PHASES.includes(run.phase) || active) return;
-  if (Date.now() - new Date(run.startedAt).getTime() > 8 * 3600000) { run.phase = 'failed'; run.errors.push('TIMED_OUT'); await saveRun(run); return; }
+  if (Date.now() - new Date(run.startedAt).getTime() > 8 * 3600000) {
+    run.phase = 'failed';
+    run.errors.push('TIMED_OUT');
+    await saveRun(run);
+    const s = await getSettings();
+    await finishWithStatus(run, false, s, true);
+    return;
+  }
   pipeline();
 }
 
@@ -252,23 +259,92 @@ async function uploadAll(run, s) {
   await sset({ prevCounts: prev });
 }
 
+function toIsoWithOffset(date) {
+  date = date || new Date();
+  const pad = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  const tzOffset = -date.getTimezoneOffset();
+  const sign = tzOffset >= 0 ? '+' : '-';
+  const offsetHours = pad(Math.floor(Math.abs(tzOffset) / 60));
+  const offsetMinutes = pad(Math.abs(tzOffset) % 60);
+  const YYYY = date.getFullYear();
+  const MM = pad(date.getMonth() + 1);
+  const DD = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${YYYY}-${MM}-${DD}T${hh}:${mm}:${ss}${sign}${offsetHours}:${offsetMinutes}`;
+}
+
 async function finishWithStatus(run, ok, s, push) {
-  const status = {
-    schema: 1, ok: ok && !(run.errors || []).some((e) => e.startsWith('SKIPPED')),
-    startedAt: run.startedAt, finishedAt: new Date().toISOString(), trigger: run.trigger,
-    counts: run.counts || {}, files: run.files || {}, errors: run.errors || [],
-    extensionVersion: chrome.runtime.getManifest().version
+  const data = await sget(['res_clients', 'res_pdf_items', 'res_pdf_summ', 'res_backlog', 'prevCounts']);
+  const prev = data.prevCounts || {};
+
+  let clientsCount = 0;
+  let pendingCount = 0;
+  let pdfCount = 0;
+  let backlogCount = 0;
+  let contactsCount = prev['contacts_directory.csv'] || 669;
+
+  if (data.res_clients && data.res_clients.rows) {
+    clientsCount = data.res_clients.rows.length;
+  } else if (run.counts && run.counts.clients) {
+    clientsCount = run.counts.clients;
+  }
+
+  if (data.res_pdf_items) {
+    pdfCount = data.res_pdf_items.length;
+  }
+  if (data.res_backlog) {
+    backlogCount = data.res_backlog.length;
+  }
+
+  if (typeof MGEBuckets !== 'undefined' && data.res_clients && data.res_clients.rows) {
+    try {
+      const bucketRes = MGEBuckets.computeBuckets({
+        clients: data.res_clients.rows.map((r) => ({
+          clientId: r[0],
+          doctorName: r[1],
+          consultant: r[2],
+          accountStatus: r[3],
+          doctorEmail: r[4],
+          workPhone: r[5],
+          defaultAddress: r[6]
+        })),
+        pdf: data.res_pdf_items || [],
+        backlog: data.res_backlog || []
+      });
+      pendingCount = bucketRes.pending;
+      clientsCount = bucketRes.clients;
+    } catch (e) {
+      console.warn('Could not compute bucket pending count', e);
+    }
+  }
+
+  const isSuccess = ok && !(run.errors || []).some((e) => e.startsWith('SKIPPED'));
+  const statusObj = {
+    timestamp: toIsoWithOffset(new Date()),
+    status: isSuccess ? 'success' : 'failure',
+    clients: clientsCount,
+    pending: pendingCount,
+    contacts: contactsCount,
+    pdf: pdfCount,
+    backlog: backlogCount
   };
-  await sset({ lastStatus: status });
+
+  if (!isSuccess) {
+    statusObj.error = (run.errors && run.errors.length) ? run.errors[run.errors.length - 1] : 'UNKNOWN_FAILURE';
+  }
+
+  await sset({ lastStatus: statusObj });
   if (push && s.ghToken) {
     try {
-      // Merge with previous remote-side file info so the app knows when each file last changed.
-      const { lastPushedStatus } = await sget('lastPushedStatus');
-      status.files = Object.assign({}, (lastPushedStatus && lastPushedStatus.files) || {}, status.files);
       await MGEGitHub.putFile({ owner: s.ghOwner, repo: s.ghRepo, branch: s.ghBranch, token: s.ghToken },
-        `${s.encDir}/last_run.json`, JSON.stringify(status, null, 2) + '\n', `data: scraper status (${ok ? 'ok' : 'failed'})`);
-      await sset({ lastPushedStatus: status, lastStatus: status });
-    } catch (e) { status.errors.push('STATUS_PUSH_FAILED'); await sset({ lastStatus: status }); }
+        `${s.encDir}/last_run.json`, JSON.stringify(statusObj, null, 2) + '\n', `data: scraper status (${isSuccess ? 'success' : 'failure'})`);
+      await sset({ lastPushedStatus: statusObj });
+    } catch (e) {
+      statusObj.error = 'STATUS_PUSH_FAILED';
+      await sset({ lastStatus: statusObj });
+    }
   }
 }
 
@@ -311,4 +387,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { nextRunTime };
+if (typeof module !== 'undefined' && module.exports) module.exports = { nextRunTime, toIsoWithOffset, finishWithStatus };

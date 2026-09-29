@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const TEXT = ['nsOrigin', 'searchId', 'ghOwner', 'ghRepo', 'ghBranch', 'ghToken', 'pdfChunk', 'backlogBatch'];
 const BOOL = ['enableClients', 'enablePdf', 'enableBacklog'];
 const DEF = { nsOrigin: 'https://3940793.app.netsuite.com', searchId: '72', ghOwner: 'SamBar1106', ghRepo: 'mge-triage-hub', ghBranch: 'main',
-  pdfChunk: 40, backlogBatch: 100, enableClients: true, enablePdf: true, enableBacklog: true, runHour: 2, runMinute: 0 };
+  pdfChunk: 40, backlogBatch: 100, enableClients: true, enablePdf: true, enableBacklog: true, runHour: 10, runMinute: 0 };
 const msg = (t, ok) => { $('msg').textContent = t; $('msg').className = ok ? 'ok' : 'bad'; };
 
 async function load() {
@@ -21,7 +21,7 @@ $('save').onclick = async () => {
   s.pdfChunk = Math.max(5, Number(s.pdfChunk) || 40);
   s.backlogBatch = Math.min(100, Math.max(10, Number(s.backlogBatch) || 100));
   BOOL.forEach((k) => { s[k] = $(k).checked; });
-  const [h, m] = ($('runTime').value || '02:00').split(':').map(Number);
+  const [h, m] = ($('runTime').value || '10:00').split(':').map(Number);
   s.runHour = h; s.runMinute = m;
   s.nsOrigin = s.nsOrigin.replace(/\/+$/, '');
   const p1 = $('passphrase').value, p2 = $('passphrase2').value;
