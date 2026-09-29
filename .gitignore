@@ -1,0 +1,17 @@
+# --- Real client data: NEVER commit (repo is public) ---
+# Plaintext CSV exports (the app reads encrypted copies from data/enc/)
+data/*.csv
+data/**/*.csv
+!data/enc/
+# Saved NetSuite pages contain client PII and session (_csrf) tokens
+scrapers/fixtures/*.html
+scrapers/fixtures/*.htm
+Scrapers_fixtures/**/*.html
+*.har
+
+# Tooling
+node_modules/
+tests/node_modules/
+tests/out/
+.DS_Store
+Thumbs.db

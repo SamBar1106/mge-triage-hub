@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>MGE Scraper Settings</title><link rel="stylesheet" href="ui.css"><style>body{max-width:640px;margin:auto}</style></head>
+<body>
+  <h1>MGE Nightly Scraper — Settings</h1>
+  <p class="muted">Secrets (GitHub token, team passphrase) are stored only in this Chrome profile (chrome.storage.local). They are never written to the repo.</p>
+
+  <h2>Schedule</h2>
+  <label for="runTime">Daily run time (this computer's local time)</label>
+  <input type="time" id="runTime" value="02:00">
+
+  <h2>NetSuite</h2>
+  <label for="nsOrigin">NetSuite address</label>
+  <input type="text" id="nsOrigin" placeholder="https://3940793.app.netsuite.com">
+  <label for="searchId">"Active Client List" saved search ID</label>
+  <input type="text" id="searchId" placeholder="72">
+  <div class="row">
+    <div><label><input type="checkbox" id="enableClients"> Client list</label></div>
+    <div><label><input type="checkbox" id="enablePdf"> PDF schedules</label></div>
+    <div><label><input type="checkbox" id="enableBacklog"> Unscheduled backlog</label></div>
+  </div>
+  <div class="row">
+    <div><label for="pdfChunk">PDF clients per batch</label><input type="number" id="pdfChunk" min="5" max="200"></div>
+    <div><label for="backlogBatch">Backlog clients per batch</label><input type="number" id="backlogBatch" min="10" max="100"></div>
+  </div>
+
+  <h2>GitHub</h2>
+  <div class="row">
+    <div><label for="ghOwner">Owner</label><input type="text" id="ghOwner"></div>
+    <div><label for="ghRepo">Repository</label><input type="text" id="ghRepo"></div>
+    <div><label for="ghBranch">Branch</label><input type="text" id="ghBranch"></div>
+  </div>
+  <label for="ghToken">Fine-grained token (only this repo; Contents: Read and write)</label>
+  <input type="password" id="ghToken" autocomplete="off" placeholder="github_pat_…">
+
+  <h2>Encryption</h2>
+  <label for="passphrase">Team passphrase (the same one people type into the dashboard)</label>
+  <input type="password" id="passphrase" autocomplete="new-password">
+  <label for="passphrase2">Repeat passphrase</label>
+  <input type="password" id="passphrase2" autocomplete="new-password">
+
+  <div style="margin-top:14px">
+    <button id="save">Save</button>
+    <button id="testGh" class="secondary">Test GitHub token</button>
+    <button id="testNs" class="secondary">Test NetSuite (count clients)</button>
+    <button id="runNow" class="secondary">Run now</button>
+  </div>
+  <p id="msg"></p>
+  <script src="options.js"></script>
+</body></html>

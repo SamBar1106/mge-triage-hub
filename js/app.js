@@ -136,35 +136,174 @@ function cleanString(str) {
   return s;
 }
 
+// === DATASET SOURCES ===
+// Preferred: encrypted files in data/enc/ (pushed nightly by the Chrome extension).
+// Fallback 1: plaintext ./data/*.csv (local copies only; they are gitignored).
+// Fallback 2: drag-and-drop (or "Load files") of plaintext .csv or encrypted .csv.enc files.
+const DATASETS = {
+  clients:  { file: 'clients_directory.csv',   signature: ['Client ID', 'Doctor Name'] },
+  contacts: { file: 'contacts_directory.csv',  signature: ['Contact Internal ID', 'Parent Client ID'] },
+  pdf:      { file: 'pdf_directory.csv',       signature: ['Client Internal ID', 'Month / Dates'] },
+  backlog:  { file: 'unscheduled_backlog.csv', signature: ['Client ID', 'Item Name', 'Completion Status'] }
+};
+const PASS_KEY = 'mge_passphrase';
+state.rawTexts = { clients: '', contacts: '', pdf: '', backlog: '' };
+
+const stripBom = (t) => (t || '').replace(/^\uFEFF/, '');
+
+function detectDataset(text, fileName) {
+  const firstLine = stripBom(text).split(/\r?\n/, 1)[0] || '';
+  const headers = firstLine.split(',').map(h => h.replace(/^"|"$/g, '').trim());
+  // Most specific first (backlog also has "Client ID").
+  for (const key of ['backlog', 'pdf', 'contacts', 'clients']) {
+    if (DATASETS[key].signature.every(h => headers.includes(h))) return key;
+  }
+  const n = (fileName || '').toLowerCase();
+  for (const key of Object.keys(DATASETS)) if (n.startsWith(DATASETS[key].file.replace('.csv', ''))) return key;
+  return null;
+}
+
+async function fetchText(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    return r.ok ? await r.text() : null;
+  } catch (e) { return null; }
+}
+
+// Ask for the team passphrase once per browser session; verify it against a sample file.
+async function getPassphrase(sampleEnc) {
+  let pass = sessionStorage.getItem(PASS_KEY);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!pass) {
+      pass = window.prompt(attempt === 0 ? 'Enter the team passphrase to unlock client data:' : 'Wrong passphrase. Try again:');
+      if (!pass) return null;
+    }
+    try {
+      await MGECrypto.decryptToText(sampleEnc, pass);
+      sessionStorage.setItem(PASS_KEY, pass);
+      return pass;
+    } catch (e) {
+      sessionStorage.removeItem(PASS_KEY);
+      pass = null;
+    }
+  }
+  return null;
+}
+
+async function loadDatasets() {
+  const texts = { clients: '', contacts: '', pdf: '', backlog: '' };
+  const encs = {};
+  await Promise.all(Object.keys(DATASETS).map(async key => {
+    const t = await fetchText(`./data/enc/${DATASETS[key].file}.enc`);
+    if (t && typeof MGECrypto !== 'undefined' && MGECrypto.isEncrypted(t)) encs[key] = JSON.parse(t);
+  }));
+  const encKeys = Object.keys(encs);
+  if (encKeys.length) {
+    const pass = await getPassphrase(encs[encKeys[0]]);
+    if (pass) {
+      await Promise.all(encKeys.map(async key => {
+        try { texts[key] = await MGECrypto.decryptToText(encs[key], pass); }
+        catch (e) { console.warn('Could not decrypt', key, e.message); }
+      }));
+    }
+  }
+  // Local plaintext fallback for anything still missing (not present on the public site).
+  await Promise.all(Object.keys(DATASETS).map(async key => {
+    if (texts[key]) return;
+    const t = await fetchText(`./data/${DATASETS[key].file}`);
+    if (t && detectDataset(t) === key) texts[key] = t;
+  }));
+  return texts;
+}
+
+async function loadRunStatus() {
+  const el = document.getElementById('data-updated');
+  if (!el) return;
+  const t = await fetchText('./data/enc/last_run.json');
+  if (!t) { el.textContent = ''; return; }
+  try {
+    const st = JSON.parse(t);
+    const when = new Date(st.finishedAt);
+    const stamp = isNaN(when) ? '' : when.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const fileTimes = Object.values(st.files || {}).map(f => new Date(f.updatedAt)).filter(d => !isNaN(d));
+    const newest = fileTimes.length ? new Date(Math.max(...fileTimes)) : null;
+    const newestStr = newest ? newest.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : stamp;
+    el.textContent = st.ok ? `Data updated ${stamp}` : `Last scrape failed ${stamp} · data from ${newestStr}`;
+    el.className = 'data-updated ' + (st.ok ? 'ok' : 'stale');
+    el.title = `Rows: ${Object.entries(st.files || {}).map(([n, f]) => `${n} ${f.rows}`).join(', ')}`;
+  } catch (e) { el.textContent = ''; }
+}
+
+// Manual fallback: drop (or pick) CSV / .csv.enc files; they replace the matching dataset.
+async function loadFiles(files) {
+  const list = Array.from(files || []);
+  let pass = null;
+  for (const f of list) {
+    let text = await f.text();
+    if (MGECrypto.isEncrypted(text)) {
+      if (!pass) pass = await getPassphrase(JSON.parse(text));
+      if (!pass) continue;
+      try { text = await MGECrypto.decryptToText(text, pass); } catch (e) { alert(`Could not decrypt ${f.name}`); continue; }
+    }
+    const key = detectDataset(text, f.name);
+    if (!key) { alert(`Not a recognised MGE CSV: ${f.name}`); continue; }
+    state.rawTexts[key] = text;
+  }
+  buildFromTexts(state.rawTexts);
+}
+window.mgeLoadFiles = loadFiles;
+
+function setupDropZone() {
+  const overlay = document.getElementById('drop-overlay');
+  let depth = 0;
+  window.addEventListener('dragenter', e => { e.preventDefault(); depth++; overlay && overlay.classList.add('show'); });
+  window.addEventListener('dragleave', e => { depth = Math.max(0, depth - 1); if (!depth && overlay) overlay.classList.remove('show'); });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault(); depth = 0; overlay && overlay.classList.remove('show');
+    if (e.dataTransfer && e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
+  });
+  const input = document.getElementById('file-input');
+  document.getElementById('btn-load')?.addEventListener('click', () => input && input.click());
+  input?.addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
+}
+
 // === BOOTSTRAP: INGEST DATASETS ===
 async function initApp() {
+  setupEventListeners();
+  setupDropZone();
+  loadRunStatus();
+
+  // Listen for DNC updates in real time
+  if (typeof firebase !== 'undefined') {
+      firebase.database().ref('dncList').on('value', (snapshot) => {
+          state.dncList = snapshot.val() || {};
+          renderClientList();
+          if (state.selectedClientId && state.clients.has(state.selectedClientId)) {
+              selectClient(state.selectedClientId);
+          }
+      });
+  }
+
+  const texts = await loadDatasets();
+  state.rawTexts = texts;
+  if (!texts.clients) {
+    const listPane = document.getElementById('client-list');
+    if (listPane) listPane.innerHTML = `<div class="empty-state"><p>No data loaded.</p><p class="empty-subtext">Reload and enter the team passphrase, or drag the CSV / .csv.enc files onto this page.</p></div>`;
+    return;
+  }
+  buildFromTexts(texts);
+}
+
+function buildFromTexts(texts) {
   const statusEl = document.getElementById('load-status');
   try {
-    const [clientsRaw, contactsRaw, pdfRaw, backlogRaw] = await Promise.all([
-      fetch('./data/clients_directory.csv').then(r => r.text()),
-      fetch('./data/contacts_directory.csv').then(r => r.text()),
-      fetch('./data/pdf_directory.csv').then(r => r.text()),
-      fetch('./data/unscheduled_backlog.csv').then(r => r.text())
-    ]);
-
-    const clientsData = parseCSV(clientsRaw);
-    const contactsData = parseCSV(contactsRaw);
-    const pdfData = parseCSV(pdfRaw);
-    const backlogData = parseCSV(backlogRaw);
+    const clientsData = parseCSV(stripBom(texts.clients));
+    const contactsData = parseCSV(stripBom(texts.contacts));
+    const pdfData = parseCSV(stripBom(texts.pdf));
+    const backlogData = parseCSV(stripBom(texts.backlog));
 
     state.clients.clear();
-
-    // Listen for DNC updates in real time
-    if (typeof firebase !== 'undefined') {
-        firebase.database().ref('dncList').on('value', (snapshot) => {
-            state.dncList = snapshot.val() || {};
-            renderClientList();
-            if (state.selectedClientId && state.clients.has(state.selectedClientId)) {
-                selectClient(state.selectedClientId);
-            }
-        });
-    }
-
 
     // 1. Build Client Index
     clientsData.forEach(c => {
@@ -258,7 +397,6 @@ async function initApp() {
     }
 
     renderAll();
-    setupEventListeners();
 
   } catch (err) {
     console.error('Initialization error:', err);

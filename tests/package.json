@@ -1,0 +1,7 @@
+{
+  "name": "mge-triage-hub-tests",
+  "private": true,
+  "description": "Offline verification harness for the MGE scraper extension and web app (no network, no real data printed).",
+  "scripts": { "test": "node run-tests.js" },
+  "devDependencies": { "jsdom": "^24.1.0" }
+}

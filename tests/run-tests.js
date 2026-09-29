@@ -1,0 +1,332 @@
+/* MGE verification harness. Prints only counts / pass-fail — never client values. */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
+const { execSync } = require('child_process');
+const { JSDOM, ResourceLoader } = require('jsdom');
+
+const ROOT = path.resolve(__dirname, '..');
+const EXT = path.join(ROOT, 'extension');
+const FIX = path.join(ROOT, 'scrapers', 'fixtures');
+const rd = (p) => fs.readFileSync(p, 'utf8');
+const results = [];
+function check(name, cond, detail) { results.push({ name, ok: !!cond, detail: detail || '' }); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); }
+function skip(name, why) { results.push({ name, ok: true, skipped: true }); console.log(`SKIP  ${name}  — ${why}`); }
+const findFixture = (...names) => names.map((n) => path.join(FIX, n)).find((p) => fs.existsSync(p));
+
+const MGECsv = require(path.join(EXT, 'lib/csv.js'));
+const MGECrypto = require(path.join(EXT, 'lib/crypto.js'));
+
+// The web app's own parser, extracted verbatim from js/app.js.
+const appSrc = rd(path.join(ROOT, 'js/app.js'));
+const parseSrc = appSrc.slice(appSrc.indexOf('function parseCSV'), appSrc.indexOf('// === DATA CLEANING'));
+const parseCSV = new Function(parseSrc + '\nreturn parseCSV;')();
+const physicalRows = (t) => t.split(/\r?\n/).filter((l) => l.trim().length).length - 1;
+
+const LABELS = /^(Company Name|Work Phone|Email( \d)?|Phone|Name|Customer ID|Home Phone|Cell Phone( \d)?|Address|Status|Consultant|Position\/Post)$/i;
+const PHONE = /^(\+?1[\s.-]?)?(\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}/;
+
+function newWindow(html, url, extra) {
+  const dom = new JSDOM(html, Object.assign({ url, runScripts: 'outside-only', pretendToBeVisual: true }, extra || {}));
+  const w = dom.window;
+  Object.defineProperty(w, 'crypto', { value: globalThis.crypto, configurable: true });
+  // jsdom has no innerText; the app writes counts with innerText.
+  Object.defineProperty(w.HTMLElement.prototype, 'innerText', { configurable: true, get() { return this.textContent; }, set(v) { this.textContent = v; } });
+  for (const k of ['CompressionStream', 'DecompressionStream', 'ReadableStream', 'Response', 'TextEncoder', 'TextDecoder']) w[k] = globalThis[k];
+  return { dom, w };
+}
+
+async function main() {
+  // ---------------- 1. Manifest / source lint ----------------
+  const manifest = JSON.parse(rd(path.join(EXT, 'manifest.json')));
+  check('manifest: MV3', manifest.manifest_version === 3);
+  check('manifest: alarms+storage+scripting perms', ['alarms', 'storage', 'scripting'].every((p) => manifest.permissions.includes(p)));
+  check('manifest: NetSuite + GitHub host permissions', ['https://*.netsuite.com/*', 'https://*.app.netsuite.com/*', 'https://api.github.com/*'].every((h) => manifest.host_permissions.includes(h)));
+  const refs = [manifest.background.service_worker, manifest.action.default_popup, manifest.options_page,
+    ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon)];
+  const bg = rd(path.join(EXT, 'background.js'));
+  (bg.match(/importScripts\(([^)]*)\)/)[1].match(/'([^']+)'/g) || []).forEach((s) => refs.push(s.replace(/'/g, '')));
+  ['popup.html', 'options.html'].forEach((h) => (rd(path.join(EXT, h)).match(/(?:src|href)="([^"]+)"/g) || []).forEach((m) => refs.push(m.split('"')[1])));
+  const missing = refs.filter((r) => !fs.existsSync(path.join(EXT, r)));
+  check('manifest: all referenced files exist', missing.length === 0, `${refs.length} refs, ${missing.length} missing`);
+  const jsFiles = execSync(`find "${EXT}" "${ROOT}/js" -name '*.js'`).toString().trim().split('\n');
+  let syntaxErr = 0; jsFiles.forEach((f) => { try { execSync(`node --check "${f}"`, { stdio: 'pipe' }); } catch (e) { syntaxErr++; } });
+  check('all extension/app JS parses (node --check)', syntaxErr === 0, `${jsFiles.length} files`);
+  const tracked = execSync('git ls-files', { cwd: ROOT }).toString().split('\n').filter(Boolean);
+  const secretHits = tracked.filter((f) => !/\.(png|enc)$/.test(f) && fs.existsSync(path.join(ROOT, f)) && /(github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{30,})/.test(rd(path.join(ROOT, f))));
+  check('no GitHub tokens in tracked files', secretHits.length === 0);
+  check('crypto lib identical in extension and app', rd(path.join(EXT, 'lib/crypto.js')) === rd(path.join(ROOT, 'js/mge-crypto.js')));
+  const trackedPlain = tracked.filter((f) => /^data\/[^/]+\.csv$/.test(f) || /fixtures\/.*\.html?$/i.test(f));
+  check('no plaintext data CSV / saved NetSuite HTML tracked', trackedPlain.length === 0, `${trackedPlain.length} tracked`);
+
+  // ---------------- 2. Client scraper on the saved Active Client List page ----------------
+  const scraperSrc = rd(path.join(EXT, 'scrapers/clientList.js'));
+  const acl = findFixture('active-client-list.html', 'Active Client List.html');
+  let clientOut = null;
+  if (!acl) skip('client scraper vs saved Active Client List page', 'fixture not present in scrapers/fixtures/ (it is gitignored)');
+  else {
+    const html = rd(acl);
+    const { w } = newWindow(html, 'https://3940793.app.netsuite.com/app/common/search/searchresults.nl?searchid=72');
+    let fetchCalls = 0; w.fetch = async () => { fetchCalls++; return { ok: false }; };
+    w.eval(scraperSrc);
+    const out = await w.scrapeActiveClientList({});
+    clientOut = out;
+    // independent expectation: distinct custjob ids among result rows
+    const expectIds = new Set(Array.from(w.document.querySelectorAll("#div__body tr.uir-list-row-tr, #div__body tr[id^='row']"))
+      .map((r) => { const a = r.querySelector("a[href*='custjob.nl']"); const m = a && a.getAttribute('href').match(/[?&]id=(\d+)/); return m && m[1]; }).filter(Boolean));
+    check('fixture: scraper ok', out.ok, `pages=${out.meta && out.meta.pages}, missingColumns=${out.meta && out.meta.missingColumns.length}`);
+    check('fixture: headers exactly as specified', JSON.stringify(out.headers) === JSON.stringify(MGECsv.CLIENT_HEADERS), out.headers.join(' | '));
+    check('fixture: row count == distinct client ids on page', out.rows.length === expectIds.size, `${out.rows.length} rows / ${expectIds.size} ids`);
+    check('fixture: every row has cell count == header count', out.rows.every((r) => r.length === out.headers.length));
+    const col = (h) => out.rows.map((r) => r[out.headers.indexOf(h)]);
+    const ids = col('Client ID');
+    check('fixture: Client ID numeric & unique', ids.every((x) => /^\d+$/.test(x)) && new Set(ids).size === ids.length);
+    const emails = col('Doctor Email'); const nE = emails.filter(Boolean).length;
+    check('fixture: Doctor Email is an email or blank', emails.every((e) => !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)), `${nE} filled / ${emails.length}`);
+    const phones = col('Work Phone'); const nP = phones.filter(Boolean).length;
+    const phoneOk = phones.filter((p) => !p || PHONE.test(p)).length;
+    check('fixture: Work Phone looks like a phone (or blank)', phoneOk / phones.length > 0.97, `${nP} filled, ${phoneOk}/${phones.length} phone-shaped or blank`);
+    const cons = col('Consultant');
+    const hdrIdx = Array.from(w.document.querySelector('tr.uir-list-headerrow').querySelectorAll('td')).findIndex((td) => td.textContent.trim() === 'Consultant');
+    const rawFilled = Array.from(w.document.querySelectorAll("#div__body tr.uir-list-row-tr, #div__body tr[id^='row']")).filter((r) => (r.querySelectorAll('td')[hdrIdx].textContent || '').trim()).length;
+    check('fixture: Consultant == page "Consultant" column (not country/phone)', cons.filter(Boolean).length === rawFilled && !cons.some((c) => /^(United States|Canada)$/.test(c) || PHONE.test(c)), `${cons.filter(Boolean).length} filled (page column has ${rawFilled} non-blank), ${new Set(cons.filter(Boolean)).size} distinct`);
+    const status = new Set(col('Account Status'));
+    check('fixture: Account Status clean enum (no "Status " prefix)', ![...status].some((s) => /^Status /.test(s)), `${status.size} distinct value(s)`);
+    check('fixture: Doctor Name filled', col('Doctor Name').every(Boolean));
+    check('fixture: URLs well-formed', col('Client URL').every((u, i) => u === `https://3940793.app.netsuite.com/app/common/entity/custjob.nl?id=${ids[i]}`) &&
+      col('Dashboard URL').every((u, i) => u === `https://3940793.app.netsuite.com/app/center/card.nl?sc=-69&entityid=${ids[i]}`));
+    const allCells = out.rows.flat();
+    check('fixture: no newlines / label placeholders in any field', !allCells.some((c) => /[\r\n]/.test(c) || LABELS.test(c) || /^Work Phone /.test(c)));
+    check('fixture: queue built for PDF/backlog scrapers', out.queue.length === out.rows.length && out.queue.every((q) => q.clientId && q.name && q.consultant));
+    check('fixture: no pagination requests on single-page fixture', fetchCalls === 0, `${fetchCalls} fetches`);
+    // Compare with the previous clients_directory.csv if it exists locally (counts only).
+    const prevPath = path.join(ROOT, 'data/clients_directory.csv');
+    if (fs.existsSync(prevPath)) {
+      const prev = parseCSV(rd(prevPath));
+      const byId = new Map(prev.map((r) => [r['Client ID'], r]));
+      const overlap = ids.filter((id) => byId.has(id)).length;
+      let emailSame = 0, emailBoth = 0;
+      out.rows.forEach((r) => { const p = byId.get(r[0]); if (!p) return; const pe = (p['Doctor Email'] || '').replace(/^Email\s*/, '').trim().toLowerCase(); if (pe && r[4]) { emailBoth++; if (pe === r[4].toLowerCase()) emailSame++; } });
+      check('fixture vs old clients_directory.csv: ID overlap', overlap / ids.length > 0.95, `${overlap}/${ids.length} ids also in old file (old file has ${prev.length})`);
+      check('fixture vs old clients_directory.csv: email agreement', emailBoth && emailSame / emailBoth > 0.95, `${emailSame}/${emailBoth} match`);
+    }
+  }
+
+  // ---------------- 3. Synthetic page: shifted columns, placeholders, quoting, pagination ----------------
+  {
+    const hdr = ['Edit | View', 'Status', 'Consultant', 'Email', 'Phone', 'First Name', 'Last Name', 'Billing City', 'Billing Country'];
+    const row = (id, cells, extraLead) => `<tr class="uir-list-row-tr">${extraLead ? '<td>x</td>' : ''}<td><a href="/app/common/entity/custjob.nl?id=${id}&e=T">Edit</a></td>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+    const page = (rows, seg) => `<html><body>${seg || ''}<table id="div__body"><tr class="uir-list-headerrow">${hdr.map((h) => `<td>${h}</td>`).join('')}</tr>${rows}</table></body></html>`;
+    const segSel = '<select name="segment"><option value="1" selected>1-3</option><option value="4">4-5</option></select>';
+    const p1 = page(
+      row(101, ['CLIENT: Active', 'Alpha Consultant', '<a href="mailto:a@example.com">a@example.com</a>', '555-111-2222', 'Ann', 'Able', 'Town', 'United States']) +
+      row(102, ['CLIENT: Active', 'Beta, "B"', 'Email', 'Work Phone', 'Bob', 'Baker\nJr', 'City, X', 'Canada'], true) + // extra leading td (off-by-one), placeholders, newline, quote, comma
+      row(103, ['CLIENT: Active', '', '', '', 'Cy', 'Cole', '', '']), segSel);
+    const p2 = page(row(104, ['CLIENT: Active', 'Delta', 'd@example.com', '(555) 333-4444', 'Di', 'Dunn', '', '']) +
+      row(101, ['CLIENT: Active', 'Alpha Consultant', 'a@example.com', '555-111-2222', 'Ann', 'Able', '', '']), segSel);
+    const { w } = newWindow(p1, 'https://1234.app.netsuite.com/app/common/search/searchresults.nl?searchid=72');
+    const fetched = [];
+    w.fetch = async (u) => { fetched.push(u); return { ok: true, text: async () => p2 }; };
+    w.eval(scraperSrc);
+    const out = await w.scrapeActiveClientList({});
+    const get = (id, h) => out.rows.find((r) => r[0] === String(id))[out.headers.indexOf(h)];
+    check('synthetic: pagination followed + de-duplicated', out.meta.pages === 2 && out.rows.length === 4 && fetched.length === 1 && /segment=4/.test(fetched[0]), `pages=${out.meta.pages} rows=${out.rows.length}`);
+    check('synthetic: columns found by header text (reordered header)', get(101, 'Consultant') === 'Alpha Consultant' && get(101, 'Doctor Email') === 'a@example.com' && get(101, 'Work Phone') === '555-111-2222' && get(101, 'Doctor Name') === 'Ann Able');
+    check('synthetic: off-by-one row (extra leading cell) realigned', get(102, 'Consultant') === 'Beta, "B"' && get(102, 'Account Status') === 'CLIENT: Active');
+    check('synthetic: label placeholders blanked', get(102, 'Doctor Email') === '' && get(102, 'Work Phone') === '');
+    check('synthetic: newline in a cell collapsed', get(102, 'Doctor Name') === 'Bob Baker Jr');
+    const csv = MGECsv.clientsCsv(out.rows);
+    const parsed = parseCSV(csv.replace(/^\uFEFF/, ''));
+    check('synthetic: CSV quoting survives the app parser', parsed.length === 4 && parsed.find((r) => r['Client ID'] === '102')['Consultant'] === 'Beta, "B"');
+    check('synthetic: missing consultant -> queue "Unassigned"', out.queue.find((q) => q.clientId === '103').consultant === 'Unassigned');
+  }
+
+  // ---------------- 4. CSV builders (all four outputs) -> app parser ----------------
+  {
+    const tricky = 'a, "b"\nc';
+    const pdfItem = { documentTitle: 'SCHEDULING AGREEMENT FORM', contactId: 1, clientInternalId: 2, services: tricky, monthDates: '3/5-3/7', hasValidDate: 'YES' };
+    const back = { clientId: 5, clientName: tricky, itemName: 'Sales Seminar A', memo: 'x', amount: '1,234.00', completionStatus: 'UNCOMPLETED' };
+    const sums = [{ clientInternalId: 2, scheduleStatus: 'HAS SCHEDULED DATES' }, { clientInternalId: 3, scheduleStatus: 'ZERO DATES (Empty Agreement Form)' }];
+    const outs = { pdf: MGECsv.pdfCsv([pdfItem, pdfItem]), backlog: MGECsv.backlogCsv([back, back, back]), zero: MGECsv.zeroDatesCsv(sums) };
+    const p = (t) => parseCSV(t.replace(/^\uFEFF/, ''));
+    check('csv: pdf_directory headers == original scraper headers', rd(path.join(ROOT, 'Scrapers_fixtures/Contact PDF scraper x2.js')).includes(MGECsv.PDF_HEADERS.map((h) => `"${h}"`).slice(0, 8).join(', ')));
+    check('csv: pdf rows load in app parser', p(outs.pdf).length === 2 && p(outs.pdf)[0]['Services'] === 'a, "b" c');
+    check('csv: backlog rows load in app parser', p(outs.backlog).length === 3 && p(outs.backlog)[0]['Amount'] === '1,234.00');
+    check('csv: zero-dates summary filters HAS SCHEDULED DATES', p(outs.zero).length === 1);
+    check('csv: ends with newline (no glued rows when concatenated)', /\r\n$/.test(outs.backlog));
+  }
+
+  // ---------------- 5. Crypto round trip ----------------
+  const pass = 'test passphrase ' + Math.random();
+  {
+    const sample = clientOut ? MGECsv.clientsCsv(clientOut.rows) : MGECsv.clientsCsv([['1', 'A B', 'C', 'S', 'e@x.co', '555-111-2222', '', 'u', 'v']]);
+    const e1 = await MGECrypto.encryptText(sample, pass, 'clients_directory.csv');
+    const e2 = await MGECrypto.encryptText(sample, pass, 'clients_directory.csv');
+    const back = await MGECrypto.decryptToText(JSON.stringify(e1), pass);
+    check('crypto: encrypt -> decrypt round trip identical (BOM stripped)', back === sample.replace(/^\uFEFF/, ''), `${sample.length} chars -> ${JSON.stringify(e1).length} bytes JSON (gzip=${e1.z})`);
+    check('crypto: fresh salt + IV per file', e1.salt !== e2.salt && e1.iv !== e2.iv && e1.ct !== e2.ct);
+    check('crypto: AES-GCM-256 / PBKDF2-SHA256 metadata', e1.alg === 'AES-GCM-256' && e1.kdf === 'PBKDF2-SHA256' && e1.iter >= 200000);
+    let wrong = false; try { await MGECrypto.decryptToText(e1, 'nope'); } catch (e) { wrong = e.message === 'BAD_PASSPHRASE'; }
+    check('crypto: wrong passphrase rejected', wrong);
+    const t = Object.assign({}, e1, { name: 'pdf_directory.csv' }); let swapped = false; try { await MGECrypto.decryptToText(t, pass); } catch (e) { swapped = true; }
+    check('crypto: renamed/swapped file rejected (AAD)', swapped);
+    const cipherHasPlain = clientOut && clientOut.rows.slice(0, 20).some((r) => JSON.stringify(e1).includes(r[1]));
+    check('crypto: ciphertext contains no plaintext names', !cipherHasPlain);
+    const rows = parseCSV(back);
+    check('crypto: decrypted CSV -> app parser loads every row', rows.length === physicalRows(back), `${rows.length} rows`);
+  }
+
+  // ---------------- 6. Backlog scraper port vs saved Dashboard page ----------------
+  const dash = findFixture('dashboard.html', 'Dash board .html');
+  if (!dash) skip('backlog scraper vs saved Dashboard page', 'fixture not present');
+  else {
+    const dashHtml = rd(dash);
+    // independent expectation from the fixture table
+    const dd = new JSDOM(dashHtml).window.document;
+    const expected = Array.from(dd.getElementById('neg1061__tab').querySelectorAll('tr')).slice(1).filter((tr) => {
+      const c = tr.querySelectorAll('td'); if (c.length <= 6) return false;
+      const t = (i) => (c[i].textContent || '').replace(/\s+/g, ' ').trim();
+      const amt = parseFloat(t(4).replace(/[^0-9.-]+/g, '') || '0');
+      return t(1) && t(1).toLowerCase() !== 'item' && !t(6) && amt > 0;
+    }).length;
+    class Loader extends ResourceLoader { fetch(url) { return Promise.resolve(Buffer.from(/card\.nl/.test(url) ? dashHtml : '')); } }
+    const { w } = newWindow('<html><body></body></html>', 'https://3940793.app.netsuite.com/app/common/search/searchresults.nl?searchid=72', { resources: new Loader() });
+    patchIframes(w);
+    w.eval(rd(path.join(EXT, 'scrapers/backlog.js')));
+    const clients = [{ clientId: '1', name: 'Test One', email: 't1@example.com', consultant: 'C1' }, { clientId: '2', name: 'Test Two', email: 't2@example.com', consultant: 'C2' }];
+    const t0 = Date.now();
+    const out = await w.scrapeBacklogChunk(clients, {});
+    const ok = out.rows.length === expected * 2;
+    check('backlog port: rows extracted == independent count x clients', ok, `${out.rows.length} rows (expected ${expected} x 2), ${Date.now() - t0} ms`);
+    check('backlog port: Email/Consultant come from queue (no phone/country shift)', out.rows.every((r) => r.email.includes('@') && /^C\d$/.test(r.consultant)));
+    check('backlog port: formats (D-Mon-YYYY dates, numeric amount, UNCOMPLETED)', out.rows.every((r) => /^\d{1,2}-[A-Z][a-z]{2}-\d{4}$/.test(r.datePurchased) && /^[\d,]+\.\d{2}$/.test(r.amount) && r.completionStatus === 'UNCOMPLETED'));
+    const csv = MGECsv.backlogCsv(out.rows);
+    check('backlog port: CSV loads fully in app parser', parseCSV(csv.replace(/^\uFEFF/, '')).length === out.rows.length);
+    w.close();
+  }
+
+  // ---------------- 7. PDF scraper port smoke test (synthetic NetSuite API + synthetic PDF) ----------------
+  {
+    const { w } = newWindow('<html><body></body></html>', 'https://1234.app.netsuite.com/app/common/search/searchresults.nl?searchid=72',
+      { resources: new (class extends ResourceLoader { fetch() { return Promise.resolve(Buffer.from('<html><body></body></html>')); } })() });
+    const fakeSearch = { Type: { CONTACT: 'contact' }, create: () => ({ run: () => ({ each: (cb) => { cb({ id: '9001', getText: () => 'Doctor - Owner', getValue: (k) => (k === 'entityid' ? 'Test Doctor' : 'Doctor - Owner') }); cb({ id: '9002', getText: () => 'Office Manager', getValue: () => 'x' }); } }) }) };
+    patchIframes(w, (cw) => { cw.require = (mods, cb) => cb(fakeSearch); });
+    const ops = ['I,', 'Test Doctor', 'agree to the following', 'Location', 'Services', 'Month / Dates', 'Hours / Days',
+      'Florida', 'Sales Seminar A', '3/5-3/7', '3 days', 'Digital', 'Marketing Seminar', 'TBD', '1 days', 'Signature', 'Client Initials', 'Witness Initials', 'Date']
+      .map((t) => `(${t}) Tj`).join('\n');
+    const deflated = zlib.deflateSync(Buffer.from(`BT\n${ops}\nET`));
+    const pdf = Buffer.concat([Buffer.from('%PDF-1.4\n%' + 'x'.repeat(600) + '\n1 0 obj\n<</Length ' + deflated.length + ' /Filter /FlateDecode>>\nstream\n'), deflated, Buffer.from('\nendstream\nendobj\n%%EOF\n')]);
+    const contactHtml = '<html><body><span id="entityid_val">Test Doctor</span><span id="custentity5_val">Test Client</span><span id="email_val">doc@example.com</span><span id="mobilephone_val">555-000-1111</span></body></html>';
+    w.fetch = async (u) => (/contact\.nl/.test(u) ? new Response(contactHtml) : /scriptlet\.nl/.test(u) ? new Response(pdf) : new Response('', { status: 404 }));
+    w.Blob = globalThis.Blob;
+    w.eval(rd(path.join(EXT, 'scrapers/pdfSchedule.js')));
+    const out = await w.scrapePdfSchedulesChunk([{ clientInternalId: '77', lastName: 'Doctor', firstName: 'Test', doctorSearchName: 'Test Doctor', consultant: 'C1' }], {});
+    check('pdf port: runs end-to-end with portal + contact + PDF parsing', out.ok && out.processed === 1, `ok=${out.ok} processed=${out.processed}`);
+    check('pdf port: only Doctor-Owner contacts, 2 schedule rows parsed', out.doctorSummaries.length === 1 && out.itemizedRows.length === 2);
+    const r = out.itemizedRows;
+    check('pdf port: row fields (location/services/dates/hasValidDate)', r[0] && r[0].location === 'Florida' && r[0].services === 'Sales Seminar A' && r[0].monthDates === '3/5-3/7' && r[0].hasValidDate === 'YES' && r[1].hasValidDate === 'NO');
+    check('pdf port: signee from PDF, contact email, suitelet URL', r[0] && r[0].signeeName === 'Test Doctor' && r[0].email === 'doc@example.com' && /contactId=9001$/.test(r[0].pdfUrl));
+    const csv = parseCSV(MGECsv.pdfCsv(out.itemizedRows).replace(/^\uFEFF/, ''));
+    check('pdf port: CSV loads in app parser with original headers', csv.length === 2 && csv[0]['Client Internal ID'] === '77' && csv[0]['Month / Dates'] === '3/5-3/7');
+    w.close();
+  }
+
+  // ---------------- 8. App end-to-end: encrypted files -> passphrase prompt -> decrypt -> parser -> buckets ----------------
+  {
+    const names = ['clients_directory.csv', 'contacts_directory.csv', 'pdf_directory.csv', 'unscheduled_backlog.csv'];
+    const encDir = path.join(ROOT, 'data/enc');
+    const passFile = process.env.MGE_PASSPHRASE_FILE;
+    let files = {}, appPass = pass, source;
+    if (passFile && fs.existsSync(passFile) && names.every((n) => fs.existsSync(path.join(encDir, n + '.enc')))) {
+      appPass = rd(passFile).trim(); source = 'committed data/enc/*.enc';
+      names.forEach((n) => { files[n + '.enc'] = rd(path.join(encDir, n + '.enc')); });
+      if (fs.existsSync(path.join(encDir, 'last_run.json'))) files['last_run.json'] = rd(path.join(encDir, 'last_run.json'));
+    } else {
+      source = 'freshly encrypted test data';
+      const plain = {};
+      names.forEach((n) => { const p = path.join(ROOT, 'data', n); if (fs.existsSync(p)) plain[n] = rd(p); });
+      if (!plain['clients_directory.csv']) plain['clients_directory.csv'] = clientOut ? MGECsv.clientsCsv(clientOut.rows) : MGECsv.clientsCsv([['1', 'A B', 'C', 'S', 'e@x.co', '', '', '', '']]);
+      for (const n of Object.keys(plain)) files[n + '.enc'] = JSON.stringify(await MGECrypto.encryptText(plain[n], pass, n));
+      files['last_run.json'] = JSON.stringify({ schema: 1, ok: true, finishedAt: new Date().toISOString(), files: {} });
+    }
+    // Expected counts: decrypt independently in Node and run the app parser.
+    const expected = {};
+    for (const n of names) if (files[n + '.enc']) expected[n] = parseCSV(await MGECrypto.decryptToText(files[n + '.enc'], appPass));
+    const indexHtml = rd(path.join(ROOT, 'index.html')).replace(/<script[\s\S]*?<\/script>/g, '');
+    const { w } = newWindow(indexHtml, 'https://sambar1106.github.io/mge-triage-hub/');
+    const served = [];
+    w.fetch = async (u) => {
+      const f = String(u).split('?')[0].replace(/^\.\//, '');
+      served.push(f);
+      const key = f.startsWith('data/enc/') ? f.slice(9) : null;
+      if (key && files[key]) return { ok: true, text: async () => files[key] };
+      return { ok: false, status: 404, text: async () => '' };
+    };
+    let prompts = 0; const answers = ['definitely wrong', appPass];
+    w.prompt = (q) => { const a = answers[Math.min(prompts++, answers.length - 1)]; if (process.env.MGE_DEBUG) console.log('DEBUG prompt', prompts, q.slice(0, 20), a === appPass ? 'correct' : 'wrong', new Error().stack.split('\n').slice(2, 4).join(' / ').replace(/\s+/g, ' ').slice(0, 200)); return a; };
+    w.alert = () => {};
+    w.eval(rd(path.join(ROOT, 'js/mge-crypto.js')));
+    w.eval(rd(path.join(ROOT, 'js/app.js')) + '\n;window.__state = state;');
+    // app.js starts itself on DOMContentLoaded (exactly like the browser); only call initApp if that already fired.
+    if (w.document.readyState === 'loading') {
+      await new Promise((res) => w.document.addEventListener('DOMContentLoaded', () => setTimeout(res, 0)));
+      for (let i = 0; i < 600 && w.eval('__state.clients.size') === 0; i++) await new Promise((r) => setTimeout(r, 50));
+    } else await w.initApp();
+    const size = w.eval('__state.clients.size');
+    if (process.env.MGE_DEBUG) console.log('DEBUG prompts', prompts, 'allEl', !!w.document.getElementById('b-count-all'), JSON.stringify(w.document.getElementById('b-count-all') && w.document.getElementById('b-count-all').textContent), 'listHTMLlen', w.document.getElementById('client-list').innerHTML.length);
+    const clientIds = new Set(expected['clients_directory.csv'].map((r) => String(r['Client ID']).trim()));
+    check(`app e2e (${source}): all clients loaded`, size === clientIds.size, `${size} clients`);
+    check('app e2e: wrong passphrase re-prompts, correct one accepted & kept in sessionStorage', prompts === 2 && w.sessionStorage.getItem('mge_passphrase') === appPass);
+    const attachedBacklog = w.eval('Array.from(__state.clients.values()).reduce((s,c)=>s+c.backlogItems.length,0)');
+    const attachedPdf = w.eval('Array.from(__state.clients.values()).reduce((s,c)=>s+c.pdfRecords.length,0)');
+    if (expected['unscheduled_backlog.csv']) check('app e2e: backlog rows attached', attachedBacklog > 0, `${attachedBacklog} items attached of ${expected['unscheduled_backlog.csv'].length} parsed (excluded program items are skipped by design)`);
+    if (expected['pdf_directory.csv']) check('app e2e: PDF rows attached', attachedPdf > 0, `${attachedPdf} of ${expected['pdf_directory.csv'].length}`);
+    const b = ['pending', 'incomplete', 'complete', 'all'].map((k) => Number(w.document.getElementById('b-count-' + k).textContent));
+    check('app e2e: bucket counts rendered and sum to total', b[3] === size && b[0] + b[1] + b[2] === size, `pending=${b[0]} incomplete=${b[1]} complete=${b[2]} all=${b[3]}`);
+    await new Promise((r) => setTimeout(r, 50));
+    check('app e2e: "Data updated" stamp shown', /^(Data updated|Last scrape failed)/.test(w.document.getElementById('data-updated').textContent));
+    check('app e2e: no plaintext data/*.csv requested once encrypted data loaded', !served.some((f) => /^data\/[^/]+\.csv$/.test(f) && f !== 'data/contacts_directory.csv' && !files[f.slice(5) + '.enc']));
+    // Drag-and-drop fallback: drop an encrypted and a plaintext file.
+    const firstEnc = files['clients_directory.csv.enc'];
+    const plainSmall = MGECsv.clientsCsv([['990001', 'Drop Test', 'C', 'S', '', '', '', '', '']]);
+    await w.mgeLoadFiles([{ name: 'clients_directory.csv.enc', text: async () => firstEnc }]);
+    check('drop fallback: encrypted .csv.enc accepted', w.eval('__state.clients.size') === size);
+    await w.mgeLoadFiles([{ name: 'whatever.csv', text: async () => plainSmall }]);
+    check('drop fallback: plaintext CSV detected by headers and loaded', w.eval('__state.clients.size') === 1);
+    w.close();
+  }
+
+  // ---------------- 9. Scheduling helper ----------------
+  {
+    global.importScripts = () => {}; global.chrome = new Proxy({}, { get: () => new Proxy(function () {}, { get: () => ({ addListener() {} }) }) });
+    const { nextRunTime } = require(path.join(EXT, 'background.js'));
+    const at = (s) => new Date(s);
+    check('schedule: before 2:00 -> same day 2:00', new Date(nextRunTime(2, 0, at('2026-09-28T01:30:00'))).getHours() === 2 && new Date(nextRunTime(2, 0, at('2026-09-28T01:30:00'))).getDate() === 28);
+    check('schedule: after 2:00 -> next day 2:00', new Date(nextRunTime(2, 0, at('2026-09-28T02:00:01'))).getDate() === 29);
+  }
+
+  const failed = results.filter((r) => !r.ok);
+  console.log(`\n${results.length - failed.length}/${results.length} passed (${results.filter((r) => r.skipped).length} skipped).`);
+  process.exit(failed.length ? 1 : 0);
+}
+
+// jsdom lacks innerText and gives each iframe its own prototypes: patch lazily on access.
+function patchIframes(w, onWindow) {
+  const proto = w.HTMLIFrameElement.prototype;
+  for (const prop of ['contentWindow', 'contentDocument']) {
+    const d = Object.getOwnPropertyDescriptor(proto, prop);
+    Object.defineProperty(proto, prop, { configurable: true, get() {
+      const v = d.get.call(this);
+      const cw = prop === 'contentWindow' ? v : v && v.defaultView;
+      if (cw && cw.HTMLElement && !cw.__mgePatched) {
+        Object.defineProperty(cw.HTMLElement.prototype, 'innerText', { configurable: true, get() { return this.textContent; } });
+        cw.__mgePatched = true;
+        if (onWindow) onWindow(cw);
+      }
+      return v;
+    } });
+  }
+}
+
+main().catch((e) => { console.error('HARNESS ERROR', e); process.exit(2); });

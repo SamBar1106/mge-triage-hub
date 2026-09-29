@@ -15,6 +15,7 @@
   <header class="ios-header">
     <div class="header-left">
       <h1>Scheduling Hub</h1>
+      <span id="data-updated" class="data-updated"></span>
     </div>
     
     <!-- Compact KPIs directly in header for max vertical space -->
@@ -66,7 +67,9 @@
       <span class="search-icon">🎓</span>
       <input type="text" id="filter-course" placeholder="Filter by item name..." />
     </div>
-    <button id="btn-export" class="ios-btn" style="padding:8px 16px; margin-left:auto; background:var(--glass-bg); border:1px solid rgba(255,255,255,0.1); color:var(--text-primary); border-radius:8px; cursor:pointer;">Export CSV</button>
+    <button id="btn-load" class="ios-btn" title="Load CSV or encrypted .csv.enc files manually (you can also drag them onto the page)" style="padding:8px 16px; margin-left:auto; background:var(--glass-bg); border:1px solid rgba(255,255,255,0.1); color:var(--text-primary); border-radius:8px; cursor:pointer;">Load files</button>
+    <input type="file" id="file-input" accept=".csv,.enc,text/csv,application/json" multiple hidden />
+    <button id="btn-export" class="ios-btn" style="padding:8px 16px; background:var(--glass-bg); border:1px solid rgba(255,255,255,0.1); color:var(--text-primary); border-radius:8px; cursor:pointer;">Export CSV</button>
     <select id="filter-status" class="ios-select">
       <option value="ALL">All Item Statuses</option>
       <option value="pending">Pending Items</option>
@@ -113,6 +116,9 @@
     </section>
   </main>
 
-  <script src="js/app.js?v=8"></script>
+  <div id="drop-overlay" class="drop-overlay"><div>Drop CSV or .csv.enc files to load them</div></div>
+
+  <script src="js/mge-crypto.js?v=1"></script>
+  <script src="js/app.js?v=9"></script>
 </body>
 </html>
