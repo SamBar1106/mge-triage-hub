@@ -223,14 +223,19 @@ async function loadRunStatus() {
   if (!t) { el.textContent = ''; return; }
   try {
     const st = JSON.parse(t);
-    const when = new Date(st.finishedAt);
+    const when = new Date(st.timestamp || st.finishedAt);
     const stamp = isNaN(when) ? '' : when.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const isOk = st.status ? st.status === 'success' : !!st.ok;
     const fileTimes = Object.values(st.files || {}).map(f => new Date(f.updatedAt)).filter(d => !isNaN(d));
     const newest = fileTimes.length ? new Date(Math.max(...fileTimes)) : null;
     const newestStr = newest ? newest.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : stamp;
-    el.textContent = st.ok ? `Data updated ${stamp}` : `Last scrape failed ${stamp} · data from ${newestStr}`;
-    el.className = 'data-updated ' + (st.ok ? 'ok' : 'stale');
-    el.title = `Rows: ${Object.entries(st.files || {}).map(([n, f]) => `${n} ${f.rows}`).join(', ')}`;
+    el.textContent = isOk ? `Data updated ${stamp}` : `Last scrape failed ${stamp}${st.files ? ` · data from ${newestStr}` : ''}`;
+    el.className = 'data-updated ' + (isOk ? 'ok' : 'stale');
+    if (st.clients !== undefined && st.pending !== undefined) {
+      el.title = `Clients: ${st.clients}, Pending: ${st.pending}`;
+    } else {
+      el.title = `Rows: ${Object.entries(st.files || {}).map(([n, f]) => `${n} ${f.rows}`).join(', ')}`;
+    }
   } catch (e) { el.textContent = ''; }
 }
 
@@ -409,6 +414,10 @@ function buildFromTexts(texts) {
 
 // === LOGIC: CROSS-REFERENCE & BUCKET CLASSIFICATION ===
 function processClientBuckets() {
+  if (typeof MGEBuckets !== 'undefined' && MGEBuckets.classifyClient) {
+    state.clients.forEach(client => MGEBuckets.classifyClient(client));
+    return;
+  }
   state.clients.forEach(client => {
     client.pdfRecords.sort((a, b) => b['Month / Dates'].localeCompare(a['Month / Dates']));
     

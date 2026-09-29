@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-  One-time setup: registers a Windows Task Scheduler task that runs every day at 1:55 AM
-  and makes sure Chrome is open (so the MGE extension's 2:00 AM scrape can run).
+  One-time setup: registers a Windows Task Scheduler task that runs every day at 9:55 AM
+  and makes sure Chrome is open (so the MGE extension's 10:00 AM scrape can run).
 
 .USAGE (normal PowerShell window, NOT "Run as administrator" - the task must run as YOU):
   powershell -ExecutionPolicy Bypass -File .\Register-MGEChromeTask.ps1
-  # optional: -Time 01:55  -ProfileDirectory "Profile 1"  -Unregister
+  # optional: -Time 09:55  -ProfileDirectory "Profile 1"  -Unregister
 #>
 [CmdletBinding()]
 param(
-  [string]$Time = '01:55',
+  [string]$Time = '09:55',
   [string]$ProfileDirectory = 'Default',
   [string]$TaskName = 'MGE - Ensure Chrome Running',
   [switch]$Unregister
@@ -41,7 +41,7 @@ $settings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowSt
   -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances IgnoreNew
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal `
-  -Settings $settings -Description 'Starts Chrome (normal profile) before the MGE nightly NetSuite scrape at 2:00 AM.' -Force | Out-Null
+  -Settings $settings -Description 'Starts Chrome (normal profile) before the MGE nightly NetSuite scrape at 10:00 AM.' -Force | Out-Null
 
 Write-Host "Registered '$TaskName' daily at $Time for $user." -ForegroundColor Green
 Write-Host "Helper: $helper   Log: $installDir\ensure-chrome.log"

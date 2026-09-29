@@ -1,0 +1,69 @@
+name: Scraper notify (Antigravity alert)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - data/enc/last_run.json   # ONLY the status file: alert commits (ANTIGRAVITY_ALERT.md) never retrigger this
+  schedule:
+    - cron: '0 16 * * *'   # 11:00 AM CDT
+    - cron: '0 17 * * *'   # 11:00 AM CST (script only acts when it is 11 AM in America/Chicago)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Optional: "fallback" = run the 11 AM no-run check now'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: scraper-notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Evaluate last_run.json, open/close issue, write/remove alert file
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_MODE: ${{ github.event.inputs.mode }}
+        run: node .github/scripts/scraper-notify.js
+
+      - name: Commit ANTIGRAVITY_ALERT.md change (if any)
+        run: |
+          if [ -z "$(git status --porcelain -- ANTIGRAVITY_ALERT.md)" ]; then
+            echo "No alert file change."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- ANTIGRAVITY_ALERT.md
+          if [ -f ANTIGRAVITY_ALERT.md ]; then MSG="alert: MGE scraper failed (ANTIGRAVITY_ALERT.md)"; else MSG="alert: clear ANTIGRAVITY_ALERT.md after successful scraper run"; fi
+          git commit -m "$MSG"
+          # The extension may push data files at the same time: rebase and retry.
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
+
+      - name: Send email notification
+        if: ${{ !cancelled() }}
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_MODE: ${{ github.event.inputs.mode }}
+        run: node .github/scripts/scraper-notify.js --email
+
