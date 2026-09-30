@@ -928,9 +928,43 @@ function setupEventListeners() {
   document.getElementById('btn-forget-passphrase')?.addEventListener('click', forgetPassphrase);
 }
 
+function formatScheduledDates(pdfRecords) {
+  if (!Array.isArray(pdfRecords)) return '';
+  const dates = [];
+  pdfRecords.forEach(pdf => {
+    const d = (pdf && pdf['Month / Dates'] != null ? String(pdf['Month / Dates']) : '').trim();
+    const upper = d.toUpperCase();
+    if (upper.length > 0 && upper !== 'NO DATES' && upper !== 'NO DATE' && upper !== 'N/A') {
+      dates.push(d);
+    }
+  });
+  return [...new Set(dates)].join(' | ');
+}
+
+function getSelectedSeminar() {
+  const el = typeof document !== 'undefined' ? document.getElementById('filter-event') : null;
+  if (!el) return 'All Events';
+  if (el.value === 'ALL') return 'All Events';
+  const opt = el.selectedIndex >= 0 && el.options ? el.options[el.selectedIndex] : null;
+  return (opt ? (opt.text || opt.textContent) : el.value) || 'All Events';
+}
+
+function getExportFileName(seminar) {
+  if (!seminar || seminar === 'All Events' || seminar === 'ALL') {
+    return 'Triage_Export.csv';
+  }
+  const clean = seminar.replace(/[^a-zA-Z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+  if (!clean || clean === 'All_Events' || clean === 'ALL') {
+    return 'Triage_Export.csv';
+  }
+  return `Triage_Export_${clean}.csv`;
+}
+
 function exportCSV() {
   const clients = getFilteredClients();
-  let csvContent = "Client Name,Company Name,Email,Phone,Pending Items,Pending Amount\n";
+  const seminar = getSelectedSeminar();
+  const seminarStr = `"${seminar.replace(/"/g, '""')}"`;
+  let csvContent = "Client Name,Company Name,Email,Phone,Pending Items,Pending Amount,Scheduled Dates,Seminar\n";
   
   clients.forEach(c => {
     let name = c.doctorName || '';
@@ -938,34 +972,47 @@ function exportCSV() {
     let company = c.companyName || '';
     company = company.replace(/^Company Name\s+/i, '');
     
-    let allEmails = [c.doctorEmail, c.altEmail, ...c.contacts.map(ct => ct['Primary Email'])];
+    let allEmails = [c.doctorEmail, c.altEmail, ...(c.contacts || []).map(ct => ct['Primary Email'])];
     allEmails = allEmails.filter(e => e && e.trim() !== '' && e.toLowerCase() !== 'none');
     allEmails = allEmails.map(e => e.replace(/^Email\s+\d*\s*/i, '').trim());
     const uniqueEmails = [...new Set(allEmails)].join(' | ');
 
-    let allPhones = [c.workPhone, c.cell1Number, ...c.contacts.map(ct => ct['Cell Phone 1'])];
+    let allPhones = [c.workPhone, c.cell1Number, ...(c.contacts || []).map(ct => ct['Cell Phone 1'])];
     allPhones = allPhones.filter(p => p && p.trim() !== '' && p.toLowerCase() !== 'none');
     allPhones = allPhones.map(p => p.replace(/^(Work Phone\s*\d*|Cell Phone\s*\d*|Home Phone|Private Phone)\s*/i, '').replace(/dntcall/i, '').trim());
     const uniquePhones = [...new Set(allPhones)].join(' | ');
+
+    const scheduledDates = formatScheduledDates(c.pdfRecords);
+    const datesStr = `"${scheduledDates.replace(/"/g, '""')}"`;
 
     const nameStr = `"${name.replace(/"/g, '""')}"`;
     const compStr = `"${company.replace(/"/g, '""')}"`;
     const emailStr = `"${uniqueEmails.replace(/"/g, '""')}"`;
     const phoneStr = `"${uniquePhones.replace(/"/g, '""')}"`;
-    const items = c.pendingItemsCount;
-    const amount = c.pendingAmount;
+    const items = c.pendingItemsCount != null ? c.pendingItemsCount : 0;
+    const amount = c.pendingAmount != null ? c.pendingAmount : 0;
     
-    csvContent += `${nameStr},${compStr},${emailStr},${phoneStr},${items},${amount}\n`;
+    csvContent += `${nameStr},${compStr},${emailStr},${phoneStr},${items},${amount},${datesStr},${seminarStr}\n`;
   });
   
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', 'Triage_Export.csv');
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  const fileName = getExportFileName(seminar);
+  if (typeof Blob !== 'undefined' && typeof document !== 'undefined') {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') ? URL.createObjectURL(blob) : '';
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+  return { csvContent, fileName };
+}
+
+if (typeof window !== 'undefined') {
+  window.formatScheduledDates = formatScheduledDates;
+  window.getSelectedSeminar = getSelectedSeminar;
+  window.getExportFileName = getExportFileName;
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
