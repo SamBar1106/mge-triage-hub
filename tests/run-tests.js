@@ -931,6 +931,142 @@ async function main() {
       resNotConfig.contacts === null);
   }
 
+  // ---------------- 14. Dashboard CSV export & helpers (TASK-008) ----------------
+  {
+    const indexHtml = rd(path.join(ROOT, 'index.html')).replace(/<script[\s\S]*?<\/script>/g, '');
+    const { w } = newWindow(indexHtml, 'https://sambar1106.github.io/mge-triage-hub/');
+    w.fetch = async () => ({ ok: false, text: async () => '' });
+    w.eval(rd(path.join(ROOT, 'js/mge-crypto.js')));
+    w.eval(rd(path.join(ROOT, 'js/mge-buckets.js')));
+    w.eval(rd(path.join(ROOT, 'js/app.js')) + '\n;window.__state = state;');
+
+    const { formatScheduledDates, getExportFileName, getSelectedSeminar, exportCSV } = w;
+
+    // 1. formatScheduledDates tests
+    check('export dates: empty / non-array returns blank',
+      formatScheduledDates() === '' && formatScheduledDates([]) === '' && formatScheduledDates(null) === '');
+
+    const invalidPdfRecords = [
+      { 'Month / Dates': '' },
+      { 'Month / Dates': '   ' },
+      { 'Month / Dates': 'NO DATES' },
+      { 'Month / Dates': 'no dates' },
+      { 'Month / Dates': 'NO DATE' },
+      { 'Month / Dates': 'No Date' },
+      { 'Month / Dates': 'N/A' },
+      { 'Month / Dates': 'n/a' }
+    ];
+    check('export dates: ignores empty, NO DATES, NO DATE, N/A (case-insensitive)',
+      formatScheduledDates(invalidPdfRecords) === '');
+
+    const validPdfRecords = [
+      { 'Month / Dates': '10/12-10/14' },
+      { 'Month / Dates': 'NO DATES' },
+      { 'Month / Dates': '10/12-10/14' },
+      { 'Month / Dates': '11/01-11/03' },
+      { 'Month / Dates': 'N/A' }
+    ];
+    check('export dates: de-duplicates and joins with pipe preserving sort order',
+      formatScheduledDates(validPdfRecords) === '10/12-10/14 | 11/01-11/03');
+
+    // 2. getExportFileName tests
+    check('export filename: All Events / empty / ALL gives Triage_Export.csv',
+      getExportFileName('All Events') === 'Triage_Export.csv' &&
+      getExportFileName('ALL') === 'Triage_Export.csv' &&
+      getExportFileName('') === 'Triage_Export.csv' &&
+      getExportFileName(null) === 'Triage_Export.csv');
+
+    check('export filename: replaces non-alphanumerics and collapses repeated underscores',
+      getExportFileName('Sales Seminar A') === 'Triage_Export_Sales_Seminar_A.csv' &&
+      getExportFileName('Conditions & Statistic Management Seminar') === 'Triage_Export_Conditions_Statistic_Management_Seminar.csv' &&
+      getExportFileName("Owner's Conference") === 'Triage_Export_Owner_s_Conference.csv' &&
+      getExportFileName('Sales   Seminar   B') === 'Triage_Export_Sales_Seminar_B.csv');
+
+    // 3. getSelectedSeminar tests
+    const eventSel = w.document.getElementById('filter-event');
+    eventSel.value = 'ALL';
+    check('export seminar: default / ALL returns All Events',
+      getSelectedSeminar() === 'All Events');
+
+    eventSel.value = 'Sales Seminar A';
+    check('export seminar: selected event returns option text',
+      getSelectedSeminar() === 'Sales Seminar A');
+
+    // 4. exportCSV integration test
+    let downloadedName = null;
+    let clicked = false;
+    if (!w.URL.createObjectURL) w.URL.createObjectURL = () => 'blob:mock-url';
+    const origAppend = w.document.body.appendChild.bind(w.document.body);
+    w.document.body.appendChild = function(el) {
+      if (el && el.tagName === 'A') {
+        downloadedName = el.getAttribute('download');
+        el.click = () => { clicked = true; };
+      }
+      return origAppend(el);
+    };
+
+    w.__state.clients.clear();
+    w.__state.activeBucket = 'ALL';
+    w.__state.searchQuery = '';
+    w.__state.courseQuery = '';
+    w.__state.consultantFilter = '';
+    w.__state.expiredFilter = '';
+    w.__state.eventFilter = '';
+    w.__state.statusFilter = '';
+
+    w.__state.clients.set('101', {
+      clientId: '101',
+      doctorName: 'Dr. Jane Smith',
+      companyName: 'Smith Dental "Care"',
+      doctorEmail: 'drjane@smithdental.com',
+      altEmail: '',
+      workPhone: '555-123-4567',
+      cell1Number: '',
+      consultant: 'Assigned',
+      accountStatus: 'Active',
+      bucket: 'ALL',
+      contacts: [],
+      pdfRecords: [
+        { 'Month / Dates': '12/01-12/03' },
+        { 'Month / Dates': 'NO DATES' }
+      ],
+      backlogItems: [
+        { 'Item Name': 'Sales Seminar A', numericAmount: 2500 }
+      ],
+      pendingItemsCount: 2,
+      pendingAmount: 2500
+    });
+
+    eventSel.value = 'Sales Seminar A';
+    const exportResult = exportCSV();
+
+    check('export csv: triggers anchor download with filtered filename',
+      downloadedName === 'Triage_Export_Sales_Seminar_A.csv' && clicked);
+
+    const lines = exportResult.csvContent.trim().split('\n');
+    check('export csv: new header line matches specification',
+      lines[0] === 'Client Name,Company Name,Email,Phone,Pending Items,Pending Amount,Scheduled Dates,Seminar');
+
+    const parsedRows = parseCSV(exportResult.csvContent);
+    check('export csv: row data contains scheduled dates and seminar properly quoted',
+      parsedRows.length === 1 &&
+      parsedRows[0]['Client Name'] === 'Dr. Jane Smith' &&
+      parsedRows[0]['Company Name'] === 'Smith Dental "Care"' &&
+      parsedRows[0]['Scheduled Dates'] === '12/01-12/03' &&
+      parsedRows[0]['Seminar'] === 'Sales Seminar A' &&
+      parsedRows[0]['Pending Items'] === '2' &&
+      parsedRows[0]['Pending Amount'] === '2500');
+
+    // Test All Events filename and seminar
+    eventSel.value = 'ALL';
+    const exportAll = exportCSV();
+    check('export csv: All Events exports to Triage_Export.csv with Seminar "All Events"',
+      downloadedName === 'Triage_Export.csv' &&
+      parseCSV(exportAll.csvContent)[0]['Seminar'] === 'All Events');
+
+    w.close();
+  }
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed (${results.filter((r) => r.skipped).length} skipped).`);
   process.exit(failed.length ? 1 : 0);
