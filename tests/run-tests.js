@@ -1085,6 +1085,165 @@ async function main() {
     w.close();
   }
 
+  // ---------------- 15. Active filter highlight, Livestream matching & Bucket renames (TASK-010) ----------------
+  {
+    const indexHtml = rd(path.join(ROOT, 'index.html')).replace(/<script[\s\S]*?<\/script>/g, '');
+    const { w } = newWindow(indexHtml, 'https://sambar1106.github.io/mge-triage-hub/');
+    w.fetch = async () => ({ ok: false, text: async () => '' });
+    w.eval(rd(path.join(ROOT, 'js/mge-crypto.js')));
+    w.eval(rd(path.join(ROOT, 'js/mge-buckets.js')));
+    w.eval(rd(path.join(ROOT, 'js/app.js')) + '\n;window.__state = state;');
+
+    const {
+      itemMatchesSeminar,
+      findMatchingSeminar,
+      formatScheduledDates,
+      updateFilterHighlights
+    } = w;
+
+    // 1. Bucket label rename checks (display text only)
+    const btnPending = w.document.querySelector('.segment-btn[data-bucket="PENDING_SCHEDULE"]');
+    const btnIncomplete = w.document.querySelector('.segment-btn[data-bucket="SCHEDULE_INCOMPLETE"]');
+    check('bucket renames: PENDING_SCHEDULE button displays "Not Scheduled"',
+      btnPending && btnPending.textContent.includes('Not Scheduled') && !btnPending.textContent.includes('Pending for Schedule'));
+    check('bucket renames: SCHEDULE_INCOMPLETE button displays "Schedule Not Complete"',
+      btnIncomplete && btnIncomplete.textContent.includes('Schedule Not Complete') && !btnIncomplete.textContent.includes('Schedule Incomplete'));
+
+    const kpiPendingBox = w.document.getElementById('kpi-pending-val')?.closest('.mini-kpi');
+    const kpiIncompleteBox = w.document.getElementById('kpi-incomplete-val')?.closest('.mini-kpi');
+    check('bucket renames: mini-KPI labels and tooltips updated',
+      kpiPendingBox?.getAttribute('title') === 'Not Scheduled Value' &&
+      kpiPendingBox?.querySelector('.mini-kpi-label')?.textContent.trim() === 'Not Scheduled' &&
+      kpiIncompleteBox?.getAttribute('title') === 'Schedule Not Complete Value' &&
+      kpiIncompleteBox?.querySelector('.mini-kpi-label')?.textContent.trim() === 'Not Complete');
+
+    // 2. Active filter highlight checks
+    const filterSearch = w.document.getElementById('filter-search');
+    const filterCourse = w.document.getElementById('filter-course');
+    const filterStatus = w.document.getElementById('filter-status');
+    const filterEvent = w.document.getElementById('filter-event');
+    const filterConsultant = w.document.getElementById('filter-consultant');
+    const filterExpired = w.document.getElementById('filter-expired');
+
+    updateFilterHighlights();
+    const allControls = [filterSearch, filterCourse, filterStatus, filterEvent, filterConsultant, filterExpired];
+    check('active filters: default state has no filter-active class',
+      allControls.every(el => el && !el.classList.contains('filter-active')));
+
+    // Input changes trigger highlight
+    filterSearch.value = 'Dr. Smith';
+    filterSearch.dispatchEvent(new w.Event('input', { bubbles: true }));
+    check('active filters: non-empty search input receives filter-active',
+      filterSearch.classList.contains('filter-active'));
+
+    filterSearch.value = '';
+    filterSearch.dispatchEvent(new w.Event('input', { bubbles: true }));
+    check('active filters: cleared search input removes filter-active',
+      !filterSearch.classList.contains('filter-active'));
+
+    filterCourse.value = 'Sales';
+    filterCourse.dispatchEvent(new w.Event('input', { bubbles: true }));
+    check('active filters: non-empty course input receives filter-active',
+      filterCourse.classList.contains('filter-active'));
+
+    filterCourse.value = '   ';
+    filterCourse.dispatchEvent(new w.Event('input', { bubbles: true }));
+    check('active filters: whitespace-only course input removes filter-active',
+      !filterCourse.classList.contains('filter-active'));
+
+    // Select dropdown changes trigger highlight
+    filterEvent.value = 'Sales Seminar A';
+    filterEvent.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check('active filters: selected event dropdown receives filter-active',
+      filterEvent.classList.contains('filter-active'));
+
+    filterEvent.value = 'ALL';
+    filterEvent.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check('active filters: reset event dropdown removes filter-active',
+      !filterEvent.classList.contains('filter-active'));
+
+    filterStatus.value = 'pending';
+    filterStatus.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check('active filters: selected status dropdown receives filter-active',
+      filterStatus.classList.contains('filter-active'));
+
+    filterStatus.value = 'ALL';
+    filterStatus.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check('active filters: reset status dropdown removes filter-active',
+      !filterStatus.classList.contains('filter-active'));
+
+    filterExpired.value = 'has_expired';
+    filterExpired.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check('active filters: selected expired dropdown receives filter-active',
+      filterExpired.classList.contains('filter-active'));
+
+    filterExpired.value = 'ALL';
+    filterExpired.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check('active filters: reset expired dropdown removes filter-active',
+      !filterExpired.classList.contains('filter-active'));
+
+    // 3. Livestream matching checks
+    check('livestream matching: itemMatchesSeminar matches various Livestream separators',
+      itemMatchesSeminar({ 'Services': 'Sales Seminar A Livestream' }, 'Sales Seminar A') &&
+      itemMatchesSeminar({ 'Services': 'Sales Seminar A - Livestream' }, 'Sales Seminar A') &&
+      itemMatchesSeminar({ 'Services': 'Sales Seminar A – Livestream' }, 'Sales Seminar A') &&
+      itemMatchesSeminar({ 'Services': 'Sales Seminar A: Livestream' }, 'Sales Seminar A') &&
+      itemMatchesSeminar({ 'Services': 'Sales Seminar A : Livestream' }, 'Sales Seminar A') &&
+      itemMatchesSeminar({ 'Services': 'Sales Seminar A' }, 'Sales Seminar A') &&
+      !itemMatchesSeminar({ 'Services': 'Sales Seminar A - Livestream' }, 'Marketing Seminar'));
+
+    check('livestream matching: findMatchingSeminar identifies seminar from livestream record',
+      findMatchingSeminar({ 'Services': 'Sales Seminar A - Livestream' }) === 'Sales Seminar A' &&
+      findMatchingSeminar({ 'Services': 'Marketing Seminar Livestream' }) === 'Marketing Seminar' &&
+      findMatchingSeminar({ 'Services': 'Conditions & Statistic Management Seminar – Livestream' }) === 'Conditions & Statistic Management Seminar');
+
+    // 4. Export dates with Livestream label
+    const lsRecords = [
+      { 'Services': 'Sales Seminar A - Livestream', 'Month / Dates': '10/05' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': '11/12' },
+      { 'Services': 'Marketing Seminar Livestream', 'Month / Dates': '12/01' },
+      { 'Services': 'Sales Seminar A - Livestream', 'Month / Dates': '10/05' } // duplicate date
+    ];
+
+    check('export dates: livestream dates marked with " (Livestream)" and de-duplicated',
+      formatScheduledDates(lsRecords, 'Sales Seminar A') === '10/05 (Livestream) | 11/12' &&
+      formatScheduledDates(lsRecords, 'Marketing Seminar') === '12/01 (Livestream)');
+
+    check('export dates: All Events marks livestream dates with seminar label and "(Livestream)"',
+      formatScheduledDates(lsRecords, 'All Events') === 'Sales Seminar A: 10/05 (Livestream) | Sales Seminar A: 11/12 | Marketing Seminar: 12/01 (Livestream)');
+
+    // 5. Bucket classification invariance test
+    const MGEBuckets = require(path.join(EXT, 'lib/buckets.js'));
+    const testClients = [
+      { clientId: '1', doctorName: 'Doc A', consultant: 'C1', accountStatus: 'Active' },
+      { clientId: '2', doctorName: 'Doc B', consultant: 'C2', accountStatus: 'Active' }
+    ];
+    const testBacklog = [
+      { clientId: '1', itemName: 'Sales Seminar A', amount: '1000', completionStatus: 'UNCOMPLETED' },
+      { clientId: '2', itemName: 'Sales Seminar A', amount: '1000', completionStatus: 'UNCOMPLETED' }
+    ];
+    const pdfStandard = [
+      { clientInternalId: '1', monthDates: '10/05-10/07', services: 'Sales Seminar A', location: 'FL' },
+      { clientInternalId: '2', monthDates: 'NO DATES', services: 'None', location: 'FL' }
+    ];
+    const pdfLivestream = [
+      { clientInternalId: '1', monthDates: '10/05-10/07', services: 'Sales Seminar A - Livestream', location: 'FL' },
+      { clientInternalId: '2', monthDates: 'NO DATES', services: 'None', location: 'FL' }
+    ];
+
+    const resStandard = MGEBuckets.computeBuckets({ clients: testClients, pdf: pdfStandard, backlog: testBacklog });
+    const resLivestream = MGEBuckets.computeBuckets({ clients: testClients, pdf: pdfLivestream, backlog: testBacklog });
+
+    check('bucket invariance: classification identical with and without livestream variants',
+      resStandard.pending === resLivestream.pending &&
+      resStandard.incomplete === resLivestream.incomplete &&
+      resStandard.complete === resLivestream.complete &&
+      resLivestream.incomplete === 1 &&
+      resLivestream.pending === 1);
+
+    w.close();
+  }
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed (${results.filter((r) => r.skipped).length} skipped).`);
   process.exit(failed.length ? 1 : 0);

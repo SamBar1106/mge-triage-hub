@@ -56,13 +56,23 @@ const EVENT_MAPPINGS = {
   "The Goals & Strategic Planning Workshop": ["the goals & strategic planning workshop", "goals & strategic planning workshop"]
 };
 
+function isLivestreamItem(item) {
+  if (!item) return false;
+  const raw = typeof item === 'string'
+    ? item
+    : (item['Services'] || item['Item Name'] || item.services || item.itemName || item['Location'] || item.location || '');
+  return /\blivestream\b/i.test(String(raw));
+}
+
 function itemMatchesSeminar(item, seminar) {
   if (!seminar || seminar === 'ALL' || seminar === 'All Events') return false;
   if (typeof EVENT_MAPPINGS === 'undefined' || !EVENT_MAPPINGS[seminar]) return false;
   const raw = typeof item === 'string'
     ? item
     : (item && (item['Item Name'] || item['Services'] || item.itemName || item.services || '')) || '';
-  const itemName = String(raw).replace(/\uFFFD/g, 'fi').toLowerCase().trim();
+  let itemName = String(raw).replace(/\uFFFD/g, 'fi').toLowerCase().trim();
+  if (!itemName) return false;
+  itemName = itemName.replace(/\s*[-–:]*\s*\(?\blivestream\b\)?\s*$/i, '').trim();
   if (!itemName) return false;
   const variants = EVENT_MAPPINGS[seminar];
   return variants.some(v => itemName.includes(v));
@@ -77,6 +87,13 @@ function findMatchingSeminar(item) {
   }
   return null;
 }
+
+const BUCKET_DISPLAY_NAMES = {
+  'PENDING_SCHEDULE': 'Not Scheduled',
+  'SCHEDULE_INCOMPLETE': 'Schedule Not Complete',
+  'PROGRAM_COMPLETE': 'Program Complete',
+  'ALL': 'All Accounts'
+};
 
 
 /**
@@ -648,6 +665,7 @@ function renderAll() {
   if (state.selectedClientId && state.clients.has(state.selectedClientId)) {
       selectClient(state.selectedClientId);
   }
+  updateFilterHighlights();
 }
 
 function renderBucketCounts() {
@@ -778,7 +796,7 @@ function selectClient(clientId) {
       <div class="glass-card card-client">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <span class="field-label">Linked Client Master</span>
-          <span class="pill">${client.bucket.replace('_', ' ')}</span>
+          <span class="pill">${BUCKET_DISPLAY_NAMES[client.bucket] || client.bucket.replace('_', ' ')}</span>
         </div>
         <div class="field-value" style="font-weight:600; font-size:14px; margin-top:3px;">${client.doctorName}</div>
         
@@ -807,6 +825,19 @@ function selectClient(clientId) {
           </div>
           <span class="pill pill-id">ID: ${client.clientId}</span>
         </div>
+        ${client.pdfRecords && client.pdfRecords.length > 0 ? `
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:4px;">
+            ${client.pdfRecords.filter(p => (p['Services'] || p.services || p['Month / Dates'])).map(p => {
+              const svc = p['Services'] || p.services || 'Scheduled Service';
+              const dt = p['Month / Dates'] || p.monthDates || '';
+              const isLs = isLivestreamItem(p);
+              return `<div style="font-size:11px; color:var(--text-secondary); display:flex; justify-content:space-between; align-items:center;">
+                <span>${svc}${isLs ? ' <span class="pill pill-livestream" style="font-size:9px; padding:1px 5px; margin-left:4px;">Livestream</span>' : ''}</span>
+                <span style="color:var(--text-primary); font-weight:600;">${dt}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        ` : ''}
         <div style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255, 255, 255, 0.08);">
           <button class="btn btn-solid" style="width:100%;" ${!pdfLink ? 'disabled' : ''} onclick="openCleanWindow('${pdfLink}')">
             📄 Print Schedule 2020 (PDF) ↗
@@ -850,7 +881,7 @@ function selectClient(clientId) {
             ${displayItems.length === 0 ? '<tr><td colspan="4" style="color:var(--text-secondary);">No backlog items.</td></tr>' : ''}
             ${displayItems.map(item => `
               <tr>
-                <td style="color:var(--text-primary); font-weight:500;">${item['Item Name']}</td>
+                <td style="color:var(--text-primary); font-weight:500;">${item['Item Name']}${isLivestreamItem(item) ? ' <span class="pill pill-livestream" style="font-size:9px; padding:1px 5px; margin-left:4px;">Livestream</span>' : ''}</td>
                 <td style="color:var(--text-secondary); font-size:12px;">${item['Memo'] || '-'}</td>
                 <td>
                   ${item.isScheduled 
@@ -877,6 +908,21 @@ function saveTriage(clientId, status, note) {
 }
 
 // === CONTROLS & LISTENERS ===
+function updateFilterHighlights() {
+  const ids = ['filter-search', 'filter-course', 'filter-status', 'filter-event', 'filter-consultant', 'filter-expired'];
+  ids.forEach(id => {
+    const el = typeof document !== 'undefined' ? document.getElementById(id) : null;
+    if (!el) return;
+    let isActive = false;
+    if (el.tagName === 'SELECT') {
+      isActive = el.selectedIndex > 0;
+    } else {
+      isActive = (el.value || '').trim().length > 0;
+    }
+    el.classList.toggle('filter-active', isActive);
+  });
+}
+
 function populateFilterDropdowns() {
   const consultants = new Set();
   state.clients.forEach(c => {
@@ -892,6 +938,7 @@ function populateFilterDropdowns() {
     opt.innerText = name;
     select.appendChild(opt);
   });
+  updateFilterHighlights();
 }
 
 function setupEventListeners() {
@@ -935,6 +982,14 @@ function setupEventListeners() {
     renderAll();
   });
 
+  const filterIds = ['filter-search', 'filter-course', 'filter-status', 'filter-event', 'filter-consultant', 'filter-expired'];
+  filterIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', updateFilterHighlights);
+    el.addEventListener('change', updateFilterHighlights);
+  });
+
   document.getElementById('client-list')?.addEventListener('click', (e) => {
     const card = e.target.closest('.client-card');
     if (card) selectClient(card.getAttribute('data-id'));
@@ -942,6 +997,7 @@ function setupEventListeners() {
 
   document.getElementById('btn-export')?.addEventListener('click', exportCSV);
   document.getElementById('btn-forget-passphrase')?.addEventListener('click', forgetPassphrase);
+  updateFilterHighlights();
 }
 
 function formatScheduledDates(pdfRecords, selectedSeminar) {
@@ -959,14 +1015,17 @@ function formatScheduledDates(pdfRecords, selectedSeminar) {
       return;
     }
 
+    const isLs = isLivestreamItem(pdf);
+    const dateLabel = isLs && !/\(livestream\)$/i.test(d) ? `${d} (Livestream)` : d;
+
     if (isAllEvents) {
       const matched = findMatchingSeminar(pdf);
       if (matched) {
-        dates.push(`${matched}: ${d}`);
+        dates.push(`${matched}: ${dateLabel}`);
       }
     } else {
       if (itemMatchesSeminar(pdf, seminar)) {
-        dates.push(d);
+        dates.push(dateLabel);
       }
     }
   });
@@ -1050,6 +1109,9 @@ if (typeof window !== 'undefined') {
   window.getSelectedSeminar = getSelectedSeminar;
   window.getExportFileName = getExportFileName;
   window.exportCSV = exportCSV;
+  window.updateFilterHighlights = updateFilterHighlights;
+  window.isLivestreamItem = isLivestreamItem;
+  window.BUCKET_DISPLAY_NAMES = BUCKET_DISPLAY_NAMES;
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
