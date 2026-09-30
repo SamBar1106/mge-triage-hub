@@ -56,6 +56,29 @@ const EVENT_MAPPINGS = {
   "The Goals & Strategic Planning Workshop": ["the goals & strategic planning workshop", "goals & strategic planning workshop"]
 };
 
+function itemMatchesSeminar(item, seminar) {
+  if (!seminar || seminar === 'ALL' || seminar === 'All Events') return false;
+  if (typeof EVENT_MAPPINGS === 'undefined' || !EVENT_MAPPINGS[seminar]) return false;
+  const raw = typeof item === 'string'
+    ? item
+    : (item && (item['Item Name'] || item['Services'] || item.itemName || item.services || '')) || '';
+  const itemName = String(raw).replace(/\uFFFD/g, 'fi').toLowerCase().trim();
+  if (!itemName) return false;
+  const variants = EVENT_MAPPINGS[seminar];
+  return variants.some(v => itemName.includes(v));
+}
+
+function findMatchingSeminar(item) {
+  if (typeof EVENT_MAPPINGS === 'undefined') return null;
+  for (const seminar in EVENT_MAPPINGS) {
+    if (itemMatchesSeminar(item, seminar)) {
+      return seminar;
+    }
+  }
+  return null;
+}
+
+
 /**
  * MGE Training Scheduling & Triage Hub - Auditor Workflow Redesign
  */
@@ -599,13 +622,10 @@ function getFilteredClients() {
 
     let eventMatch = true;
     if (eventFilter !== 'ALL' && typeof EVENT_MAPPINGS !== 'undefined' && EVENT_MAPPINGS[eventFilter]) {
-      const variants = EVENT_MAPPINGS[eventFilter];
       eventMatch = c.backlogItems.some(item => {
         if (statusFilter === 'pending' && (item.isScheduled || item.isExpired)) return false;
         if (statusFilter === 'scheduled' && !item.isScheduled) return false;
-        
-        const itemName = (item['Item Name'] || '').toLowerCase().trim();
-        return variants.some(v => itemName.includes(v));
+        return itemMatchesSeminar(item, eventFilter);
       });
     } else if (statusFilter !== 'ALL') {
       // If no specific event is selected, just filter by whether they have ANY items of this status
@@ -736,11 +756,7 @@ function selectClient(clientId) {
       displayItems = displayItems.filter(item => (item['Item Name'] || '').toLowerCase().includes(cq));
   }
   if (state.eventFilter && state.eventFilter !== 'ALL' && typeof EVENT_MAPPINGS !== 'undefined' && EVENT_MAPPINGS[state.eventFilter]) {
-      const variants = EVENT_MAPPINGS[state.eventFilter];
-      displayItems = displayItems.filter(item => {
-          const itemName = (item['Item Name'] || '').toLowerCase().trim();
-          return variants.some(v => itemName.includes(v));
-      });
+      displayItems = displayItems.filter(item => itemMatchesSeminar(item, state.eventFilter));
   }
 
   detailPane.innerHTML = `
@@ -928,16 +944,33 @@ function setupEventListeners() {
   document.getElementById('btn-forget-passphrase')?.addEventListener('click', forgetPassphrase);
 }
 
-function formatScheduledDates(pdfRecords) {
+function formatScheduledDates(pdfRecords, selectedSeminar) {
   if (!Array.isArray(pdfRecords)) return '';
+  const seminar = selectedSeminar !== undefined ? selectedSeminar : getSelectedSeminar();
+  const isAllEvents = !seminar || seminar === 'ALL' || seminar === 'All Events';
+
   const dates = [];
   pdfRecords.forEach(pdf => {
-    const d = (pdf && pdf['Month / Dates'] != null ? String(pdf['Month / Dates']) : '').trim();
+    const d = (pdf && (pdf['Month / Dates'] != null ? pdf['Month / Dates'] : pdf.monthDates) != null
+      ? String(pdf['Month / Dates'] != null ? pdf['Month / Dates'] : pdf.monthDates)
+      : '').trim();
     const upper = d.toUpperCase();
-    if (upper.length > 0 && upper !== 'NO DATES' && upper !== 'NO DATE' && upper !== 'N/A') {
-      dates.push(d);
+    if (!upper || upper === 'NO DATES' || upper === 'NO DATE' || upper === 'N/A') {
+      return;
+    }
+
+    if (isAllEvents) {
+      const matched = findMatchingSeminar(pdf);
+      if (matched) {
+        dates.push(`${matched}: ${d}`);
+      }
+    } else {
+      if (itemMatchesSeminar(pdf, seminar)) {
+        dates.push(d);
+      }
     }
   });
+
   return [...new Set(dates)].join(' | ');
 }
 
@@ -982,7 +1015,7 @@ function exportCSV() {
     allPhones = allPhones.map(p => p.replace(/^(Work Phone\s*\d*|Cell Phone\s*\d*|Home Phone|Private Phone)\s*/i, '').replace(/dntcall/i, '').trim());
     const uniquePhones = [...new Set(allPhones)].join(' | ');
 
-    const scheduledDates = formatScheduledDates(c.pdfRecords);
+    const scheduledDates = formatScheduledDates(c.pdfRecords, seminar);
     const datesStr = `"${scheduledDates.replace(/"/g, '""')}"`;
 
     const nameStr = `"${name.replace(/"/g, '""')}"`;
@@ -1010,9 +1043,13 @@ function exportCSV() {
 }
 
 if (typeof window !== 'undefined') {
+  window.EVENT_MAPPINGS = EVENT_MAPPINGS;
+  window.itemMatchesSeminar = itemMatchesSeminar;
+  window.findMatchingSeminar = findMatchingSeminar;
   window.formatScheduledDates = formatScheduledDates;
   window.getSelectedSeminar = getSelectedSeminar;
   window.getExportFileName = getExportFileName;
+  window.exportCSV = exportCSV;
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
