@@ -69,6 +69,21 @@
     --badge-error-text: rgb(185, 28, 28);
     --badge-error-border: rgba(239, 68, 68, 0.3);
   }
+
+  .filter-active {
+    background-color: #dbeafe !important;
+    border-color: #60a5fa !important;
+    outline: 1px solid #60a5fa;
+    color: #1e3a8a !important;
+  }
+  .filter-active::placeholder {
+    color: #3b82f6;
+  }
+  .pill-livestream {
+    background: #e0f2fe;
+    color: #0369a1;
+    border-color: #7dd3fc;
+  }
 }
 
 
@@ -261,6 +276,16 @@ body {
   outline: none;
 }
 .ios-select option { background-color: var(--bg-color); }
+.filter-active {
+  border-color: #60a5fa !important;
+  outline: 1px solid #60a5fa;
+  background-color: rgba(96, 165, 250, 0.18) !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.4);
+}
+.filter-active::placeholder {
+  color: rgba(255, 255, 255, 0.7);
+}
 
 /* Workbench Split Screen */
 .workbench {
@@ -386,6 +411,7 @@ a:hover { color: rgb(56, 189, 248); }
 .pill-scheduled { background: var(--badge-ready-bg); color: var(--badge-ready-text); border-color: var(--badge-ready-border); }
 .pill-expired { background: var(--badge-error-bg); color: var(--badge-error-text); border-color: var(--badge-error-border); }
 .pill-pending { background: rgba(249, 115, 22, 0.25); color: var(--accent-orange); border-color: rgba(249, 115, 22, 0.5); }
+.pill-livestream { background: rgba(56, 189, 248, 0.2); color: var(--accent-blue); border-color: rgba(56, 189, 248, 0.4); }
 
 /* Triage Notes Area */
 .triage-input-row {
