@@ -1,7 +1,7 @@
 /*
  * Scraper failure alert for Antigravity (no notification API) + humans + email notifications.
  * Reads data/enc/last_run.json (timestamps / counts / error codes only - no client data) and:
- *  - FAILURE (push with status:failure / ok:false, or the 11 AM Chicago "no run today" fallback):
+ *  - FAILURE (push with status:failure / ok:false, or the 5 PM Chicago "no run today" fallback):
  *      open or comment on the GitHub issue "MGE scraper failed <Chicago date>" (label scraper-failure)
  *      and write ANTIGRAVITY_ALERT.md (committed by the workflow).
  *  - SUCCESS (push with status:success / ok:true): delete ANTIGRAVITY_ALERT.md and close open scraper-failure issues.
@@ -66,11 +66,11 @@ async function run(opts) {
   let decision = 'noop', errors = [], runTime = finished;
   const mode = opts.forceMode || process.env.FORCE_MODE || '';
   if (event === 'schedule' || mode === 'fallback') {
-    // Two cron entries (16:00 and 17:00 UTC) cover CDT/CST; only act at 11 AM Chicago.
-    if (mode !== 'fallback' && chicagoHour(now) !== 11) { log('Not 11 AM in Chicago; skipping.'); return { decision: 'skip' }; }
+    // Two cron entries (22:00 and 23:00 UTC) cover CDT/CST; only act at 5 PM Chicago.
+    if (mode !== 'fallback' && chicagoHour(now) !== 17) { log('Not 5 PM in Chicago; skipping.'); return { decision: 'skip' }; }
     if (!finished || chicagoDate(finished) !== today) {
       decision = 'alert'; runTime = now;
-      errors = [`NO_RUN_TODAY: no scraper run recorded for ${today} by 11 AM (last run: ${finished ? chicagoStamp(finished) : 'never'})`];
+      errors = [`NO_RUN_TODAY: no scraper run recorded for ${today} by 5 PM (last run: ${finished ? chicagoStamp(finished) : 'never'})`];
     } // a failed run today was already alerted by the push trigger, so don't re-alert here.
   } else if (status) {
     const isFailed = status.status ? status.status === 'failure' : status.ok === false;
@@ -300,14 +300,14 @@ async function runEmail(opts) {
   let bodyLines = [];
 
   if (event === 'schedule' || mode === 'fallback') {
-    if (mode !== 'fallback' && chicagoHour(now) !== 11) {
-      log('Not 11 AM in Chicago; skipping email.');
+    if (mode !== 'fallback' && chicagoHour(now) !== 17) {
+      log('Not 5 PM in Chicago; skipping email.');
       return { sent: false, reason: 'skipped_dst_twin' };
     }
     if (!finished || chicagoDate(finished) !== today) {
       shouldSend = true;
       const when = chicagoStamp(now);
-      const errText = `NO_RUN_TODAY: no scraper run recorded for ${today} by 11 AM (last run: ${finished ? chicagoStamp(finished) : 'never'})`;
+      const errText = `NO_RUN_TODAY: no scraper run recorded for ${today} by 5 PM (last run: ${finished ? chicagoStamp(finished) : 'never'})`;
       subject = 'MGE scraper: FAILED';
       bodyLines = [
         `Time (America/Chicago): ${when}`,

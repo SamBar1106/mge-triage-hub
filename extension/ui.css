@@ -7,3 +7,20 @@ button.secondary{background:#fff;color:#0284c7}
 .muted{color:#64748b;font-size:12px}.ok{color:#047857}.bad{color:#b91c1c}
 pre{background:#0f172a;color:#e2e8f0;padding:8px;border-radius:6px;max-height:180px;overflow:auto;font-size:11px;white-space:pre-wrap}
 .row{display:flex;gap:8px}.row>div{flex:1}
+.progress-list{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.progress-row{background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:8px 10px;font-size:12px}
+.progress-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.progress-name{font-weight:600;color:#0f172a}
+.progress-status{font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600}
+.status-waiting{background:#f1f5f9;color:#64748b}
+.status-running{background:#e0f2fe;color:#0284c7}
+.status-done{background:#dcfce7;color:#15803d}
+.status-failed{background:#fee2e2;color:#b91c1c}
+.status-skipped{background:#fef3c7;color:#b45309}
+.status-disabled{background:#f1f5f9;color:#94a3b8}
+.progress-details{display:flex;justify-content:space-between;color:#64748b;font-size:11px;margin-bottom:4px}
+progress{width:100%;height:6px;border-radius:3px;appearance:none;-webkit-appearance:none;overflow:hidden;border:none;background:#e2e8f0;display:block}
+progress::-webkit-progress-bar{background-color:#e2e8f0;border-radius:3px}
+progress::-webkit-progress-value{background-color:#0284c7;border-radius:3px}
+progress:not([value])::-webkit-progress-bar{background-color:#cbd5e1}
+

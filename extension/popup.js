@@ -2,6 +2,13 @@ const $ = (id) => (typeof document !== 'undefined' ? document.getElementById(id)
 const send = (type) => chrome.runtime.sendMessage({ type });
 const fmt = (t) => (t ? new Date(t).toLocaleString() : '—');
 
+const SCRAPER_NAMES = {
+  clients: 'Client list',
+  pdf: 'PDF schedules',
+  backlog: 'Unscheduled backlog',
+  upload: 'Upload'
+};
+
 async function refresh() {
   const st = await send('status');
   const run = st.run, last = st.lastStatus;
@@ -32,6 +39,67 @@ async function refresh() {
     const err = last.error || (last.errors && last.errors.length ? last.errors.join(', ') : null);
     if (err) line(err, 'bad');
   }
+
+  const progBox = $('progress');
+  if (progBox) {
+    progBox.replaceChildren();
+    const list = document.createElement('div');
+    list.className = 'progress-list';
+    for (const key of ['clients', 'pdf', 'backlog', 'upload']) {
+      const p = (run && run.progress && run.progress[key]) || {
+        status: 'Waiting',
+        step: 'Waiting',
+        done: 0,
+        total: null,
+        startedAt: null
+      };
+      const row = document.createElement('div');
+      row.className = 'progress-row';
+
+      const header = document.createElement('div');
+      header.className = 'progress-header';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'progress-name';
+      nameEl.textContent = SCRAPER_NAMES[key];
+      const statusEl = document.createElement('span');
+      statusEl.className = `progress-status status-${(p.status || 'waiting').toLowerCase()}`;
+      statusEl.textContent = p.status || 'Waiting';
+      header.appendChild(nameEl);
+      header.appendChild(statusEl);
+
+      const details = document.createElement('div');
+      details.className = 'progress-details';
+      const stepEl = document.createElement('span');
+      stepEl.className = 'progress-step';
+      stepEl.textContent = p.step || '—';
+      const timeEl = document.createElement('span');
+      timeEl.className = 'progress-time';
+      timeEl.textContent = p.startedAt ? `Started ${fmt(p.startedAt)}` : '—';
+      details.appendChild(stepEl);
+      details.appendChild(timeEl);
+
+      const bar = document.createElement('progress');
+      if (p.total !== null && p.total !== undefined && p.total > 0) {
+        bar.value = p.done || 0;
+        bar.max = p.total;
+      } else if (p.status === 'Done') {
+        bar.value = 1;
+        bar.max = 1;
+      } else if (p.status === 'Running') {
+        bar.removeAttribute('value');
+      } else {
+        bar.value = 0;
+        bar.max = 1;
+      }
+
+      row.appendChild(header);
+      row.appendChild(details);
+      row.appendChild(bar);
+      list.appendChild(row);
+    }
+    progBox.appendChild(list);
+  }
+
   const logEl = $('log');
   if (logEl) logEl.textContent = (run && run.log ? run.log : []).join('\n');
   const runBtn = $('run');
@@ -43,7 +111,10 @@ if (typeof document !== 'undefined') {
   const oBtn = $('opts'); if (oBtn) oBtn.onclick = () => chrome.runtime.openOptionsPage();
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     refresh();
-    if (typeof setInterval !== 'undefined') setInterval(refresh, 3000);
+    if (typeof setInterval !== 'undefined') setInterval(refresh, 1000);
+    if (chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener(() => refresh());
+    }
   }
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { refresh, fmt };
+if (typeof module !== 'undefined' && module.exports) module.exports = { refresh, fmt, SCRAPER_NAMES };

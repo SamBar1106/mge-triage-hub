@@ -170,19 +170,86 @@ async function fetchText(url) {
   } catch (e) { return null; }
 }
 
-// Ask for the team passphrase once per browser session; verify it against a sample file.
-async function getPassphrase(sampleEnc) {
-  let pass = sessionStorage.getItem(PASS_KEY);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (!pass) {
-      pass = window.prompt(attempt === 0 ? 'Enter the team passphrase to unlock client data:' : 'Wrong passphrase. Try again:');
-      if (!pass) return null;
+function promptPassphraseModal(message) {
+  return new Promise((resolve) => {
+    // If in test environment where window.prompt is mocked (non-native function):
+    if (typeof window.prompt === 'function' && !window.prompt.toString().includes('[native code]')) {
+      const p = window.prompt(message);
+      return resolve({ pass: p, remember: false });
     }
+    const modal = document.getElementById('passphrase-modal');
+    if (!modal) {
+      const p = typeof window.prompt === 'function' ? window.prompt(message) : null;
+      return resolve({ pass: p, remember: false });
+    }
+    const msgEl = document.getElementById('passphrase-prompt-message');
+    const input = document.getElementById('passphrase-input');
+    const cb = document.getElementById('remember-me-checkbox');
+    const form = document.getElementById('passphrase-form');
+
+    if (msgEl) msgEl.textContent = message;
+    if (input) input.value = '';
+    if (cb) cb.checked = false;
+
+    modal.style.display = 'flex';
+    if (input) input.focus();
+
+    const onSubmit = (e) => {
+      e.preventDefault();
+      cleanup();
+      modal.style.display = 'none';
+      resolve({ pass: input ? input.value : '', remember: cb ? cb.checked : false });
+    };
+
+    function cleanup() {
+      form.removeEventListener('submit', onSubmit);
+    }
+    form.addEventListener('submit', onSubmit);
+  });
+}
+
+function forgetPassphrase() {
+  localStorage.removeItem(PASS_KEY);
+  sessionStorage.removeItem(PASS_KEY);
+  if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+    try { window.location.reload(); } catch (e) {}
+  }
+}
+window.mgeForgetPassphrase = forgetPassphrase;
+
+// Ask for the team passphrase; read localStorage first, then sessionStorage.
+async function getPassphrase(sampleEnc) {
+  let pass = localStorage.getItem(PASS_KEY) || sessionStorage.getItem(PASS_KEY);
+  if (pass) {
     try {
       await MGECrypto.decryptToText(sampleEnc, pass);
-      sessionStorage.setItem(PASS_KEY, pass);
       return pass;
     } catch (e) {
+      localStorage.removeItem(PASS_KEY);
+      sessionStorage.removeItem(PASS_KEY);
+      pass = null;
+    }
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const msg = attempt === 0
+      ? 'Enter the team passphrase to unlock client data:'
+      : 'Wrong passphrase. Try again:';
+    const res = await promptPassphraseModal(msg);
+    if (!res || !res.pass) return null;
+    pass = res.pass;
+    try {
+      await MGECrypto.decryptToText(sampleEnc, pass);
+      if (res.remember) {
+        localStorage.setItem(PASS_KEY, pass);
+        sessionStorage.removeItem(PASS_KEY);
+      } else {
+        sessionStorage.setItem(PASS_KEY, pass);
+        localStorage.removeItem(PASS_KEY);
+      }
+      return pass;
+    } catch (e) {
+      localStorage.removeItem(PASS_KEY);
       sessionStorage.removeItem(PASS_KEY);
       pass = null;
     }
@@ -858,6 +925,7 @@ function setupEventListeners() {
   });
 
   document.getElementById('btn-export')?.addEventListener('click', exportCSV);
+  document.getElementById('btn-forget-passphrase')?.addEventListener('click', forgetPassphrase);
 }
 
 function exportCSV() {

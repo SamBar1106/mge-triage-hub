@@ -5,8 +5,12 @@
   <p class="muted">Secrets (GitHub token, team passphrase) are stored only in this Chrome profile (chrome.storage.local). They are never written to the repo.</p>
 
   <h2>Schedule</h2>
-  <label for="runTime">Daily run time (this computer's local time)</label>
-  <input type="time" id="runTime" value="10:00">
+  <label>Daily run times (this computer's local time)</label>
+  <div class="row">
+    <div><label for="runTime1">Run 1 (always runs)</label><input type="time" id="runTime1" value="10:00"></div>
+    <div><label for="runTime2">Run 2 (skip if succeeded)</label><input type="time" id="runTime2" value="12:00"></div>
+    <div><label for="runTime3">Run 3 (skip if succeeded)</label><input type="time" id="runTime3" value="16:00"></div>
+  </div>
 
   <h2>NetSuite</h2>
   <label for="nsOrigin">NetSuite address</label>
