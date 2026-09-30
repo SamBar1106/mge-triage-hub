@@ -940,34 +940,48 @@ async function main() {
     w.eval(rd(path.join(ROOT, 'js/mge-buckets.js')));
     w.eval(rd(path.join(ROOT, 'js/app.js')) + '\n;window.__state = state;');
 
-    const { formatScheduledDates, getExportFileName, getSelectedSeminar, exportCSV } = w;
+    const { formatScheduledDates, getExportFileName, getSelectedSeminar, exportCSV, itemMatchesSeminar, findMatchingSeminar } = w;
 
     // 1. formatScheduledDates tests
     check('export dates: empty / non-array returns blank',
       formatScheduledDates() === '' && formatScheduledDates([]) === '' && formatScheduledDates(null) === '');
 
     const invalidPdfRecords = [
-      { 'Month / Dates': '' },
-      { 'Month / Dates': '   ' },
-      { 'Month / Dates': 'NO DATES' },
-      { 'Month / Dates': 'no dates' },
-      { 'Month / Dates': 'NO DATE' },
-      { 'Month / Dates': 'No Date' },
-      { 'Month / Dates': 'N/A' },
-      { 'Month / Dates': 'n/a' }
+      { 'Services': 'Sales Seminar A', 'Month / Dates': '' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': '   ' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': 'NO DATES' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': 'no dates' },
+      { 'Services': 'Marketing Seminar', 'Month / Dates': 'NO DATE' },
+      { 'Services': 'Marketing Seminar', 'Month / Dates': 'No Date' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': 'N/A' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': 'n/a' }
     ];
     check('export dates: ignores empty, NO DATES, NO DATE, N/A (case-insensitive)',
-      formatScheduledDates(invalidPdfRecords) === '');
+      formatScheduledDates(invalidPdfRecords, 'Sales Seminar A') === '' &&
+      formatScheduledDates(invalidPdfRecords, 'All Events') === '');
 
-    const validPdfRecords = [
-      { 'Month / Dates': '10/12-10/14' },
-      { 'Month / Dates': 'NO DATES' },
-      { 'Month / Dates': '10/12-10/14' },
-      { 'Month / Dates': '11/01-11/03' },
-      { 'Month / Dates': 'N/A' }
+    const mixedPdfRecords = [
+      { 'Services': 'Sales Seminar A', 'Month / Dates': '10/12-10/14' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': 'NO DATES' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': '10/12-10/14' },
+      { 'Services': 'Sales Seminar A - in person only', 'Month / Dates': '11/01-11/03' },
+      { 'Services': 'Marketing Seminar', 'Month / Dates': '12/05-12/07' },
+      { 'Services': 'Unknown Course', 'Month / Dates': '01/10-01/12' },
+      { 'Services': 'Sales Seminar A', 'Month / Dates': 'N/A' }
     ];
-    check('export dates: de-duplicates and joins with pipe preserving sort order',
-      formatScheduledDates(validPdfRecords) === '10/12-10/14 | 11/01-11/03');
+    check('export dates: filtered seminar returns only matching dates de-duplicated',
+      formatScheduledDates(mixedPdfRecords, 'Sales Seminar A') === '10/12-10/14 | 11/01-11/03' &&
+      formatScheduledDates(mixedPdfRecords, 'Marketing Seminar') === '12/05-12/07' &&
+      formatScheduledDates(mixedPdfRecords, 'Owner\'s Conference') === '');
+
+    check('export dates: All Events returns labeled dates omitting non-matching records',
+      formatScheduledDates(mixedPdfRecords, 'All Events') === 'Sales Seminar A: 10/12-10/14 | Sales Seminar A: 11/01-11/03 | Marketing Seminar: 12/05-12/07');
+
+    check('seminar matching: itemMatchesSeminar and findMatchingSeminar work correctly',
+      itemMatchesSeminar({ 'Services': 'Sales Seminar A - in person only' }, 'Sales Seminar A') &&
+      !itemMatchesSeminar({ 'Services': 'Marketing Seminar' }, 'Sales Seminar A') &&
+      findMatchingSeminar({ 'Services': 'Sales Seminar A - in person only' }) === 'Sales Seminar A' &&
+      findMatchingSeminar({ 'Services': 'Unknown Course' }) === null);
 
     // 2. getExportFileName tests
     check('export filename: All Events / empty / ALL gives Triage_Export.csv',
@@ -1027,8 +1041,10 @@ async function main() {
       bucket: 'ALL',
       contacts: [],
       pdfRecords: [
-        { 'Month / Dates': '12/01-12/03' },
-        { 'Month / Dates': 'NO DATES' }
+        { 'Services': 'Sales Seminar A', 'Month / Dates': '12/01-12/03' },
+        { 'Services': 'Marketing Seminar', 'Month / Dates': '11/15-11/17' },
+        { 'Services': 'Sales Seminar A', 'Month / Dates': 'NO DATES' },
+        { 'Services': 'Unrelated Course', 'Month / Dates': '09/01-09/03' }
       ],
       backlogItems: [
         { 'Item Name': 'Sales Seminar A', numericAmount: 2500 }
@@ -1057,12 +1073,14 @@ async function main() {
       parsedRows[0]['Pending Items'] === '2' &&
       parsedRows[0]['Pending Amount'] === '2500');
 
-    // Test All Events filename and seminar
+    // Test All Events filename, seminar, and labeled scheduled dates
     eventSel.value = 'ALL';
     const exportAll = exportCSV();
-    check('export csv: All Events exports to Triage_Export.csv with Seminar "All Events"',
+    const parsedAll = parseCSV(exportAll.csvContent);
+    check('export csv: All Events exports to Triage_Export.csv with Seminar "All Events" and labeled dates',
       downloadedName === 'Triage_Export.csv' &&
-      parseCSV(exportAll.csvContent)[0]['Seminar'] === 'All Events');
+      parsedAll[0]['Seminar'] === 'All Events' &&
+      parsedAll[0]['Scheduled Dates'] === 'Sales Seminar A: 12/01-12/03 | Marketing Seminar: 11/15-11/17');
 
     w.close();
   }
