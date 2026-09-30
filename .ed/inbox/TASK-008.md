@@ -1,5 +1,7 @@
 # TASK-008: Add Scheduled Dates and Seminar columns to the dashboard CSV export
 
+Scope (files allowed): js/app.js, tests/run-tests.js; everything else is read-only.
+
 Repo: SamBar1106/mge-triage-hub. File: js/app.js, function exportCSV() (the "Export" button, btn-export).
 
 ## Changes
@@ -13,5 +15,5 @@ Repo: SamBar1106/mge-triage-hub. File: js/app.js, function exportCSV() (the "Exp
 ## Rules
 - Only touch js/app.js (and tests/run-tests.js if you add a unit test for the date/filename helpers). No other files.
 - Never commit client data, CSVs, tokens or passphrases.
-- Run `cd tests && npm test` once; it must pass.
+- Shell commands are not available; keep the change small and self-evidently correct.
 - Commit to this branch (ed/TASK-008). Do not merge.
