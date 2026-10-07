@@ -1,0 +1,200 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { HubError } = require('./errors');
+const { loadHub } = require('./context');
+const { readPassphrase, loadCode, loadData, safeRef } = require('./source');
+const { execute, BUCKET_MAP } = require('./commands');
+
+const USAGE = [
+  'mge-hub — look up the MGE scheduling hub from the command line',
+  '',
+  'usage:',
+  '  mge-hub [--json] [--limit N] [--ref REF] [--source-dir DIR] [--code local|remote] [--no-cache] [--passphrase-file PATH] <command>',
+  '',
+  'commands:',
+  '  status',
+  '  buckets',
+  '  find <text>',
+  '  client <client-id>',
+  '  list [--bucket pending|incomplete|complete|all] [--event NAME] [--status pending|scheduled]',
+  '       [--consultant NAME] [--expired has|no] [--course TEXT] [--search TEXT] [--csv]',
+  '  schedule [--event NAME]',
+  '  flags',
+  '  events',
+  '',
+  'passphrase: --passphrase-file PATH, or MGE_HUB_PASSPHRASE_FILE, or MGE_HUB_PASSPHRASE',
+  'DNC and triage notes are not available in the CLI.'
+].join('\n');
+
+const VALUE_FLAGS = new Set([
+  'ref', 'code', 'source-dir', 'passphrase-file', 'limit', 'bucket',
+  'event', 'status', 'consultant', 'expired', 'course', 'search'
+]);
+const BOOL_FLAGS = new Set(['json', 'no-cache', 'csv', 'week', 'help']);
+const COMMANDS = new Set(['status', 'buckets', 'find', 'client', 'list', 'schedule', 'flags', 'events']);
+
+function rejectPassphraseArgv(argv) {
+  for (const arg of argv) {
+    if (arg === '--passphrase' || arg.startsWith('--passphrase=')) {
+      process.stderr.write('passphrase must not be passed as an argument\n');
+      process.exit(1);
+    }
+  }
+}
+
+function parseArgs(argv) {
+  const flags = {};
+  const positionals = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') {
+      positionals.push.apply(positionals, argv.slice(i + 1));
+      break;
+    }
+    if (arg === '-h' || arg === '--help') {
+      flags.help = true;
+      continue;
+    }
+    if (!arg.startsWith('--')) {
+      positionals.push(arg);
+      continue;
+    }
+    let name = arg.slice(2);
+    let value;
+    const eq = name.indexOf('=');
+    if (eq !== -1) {
+      value = name.slice(eq + 1);
+      name = name.slice(0, eq);
+    }
+    if (!VALUE_FLAGS.has(name) && !BOOL_FLAGS.has(name)) {
+      throw new HubError(1, 'unknown flag --' + name);
+    }
+    if (BOOL_FLAGS.has(name)) {
+      if (eq !== -1) throw new HubError(1, 'unknown flag --' + name);
+      flags[name] = true;
+      continue;
+    }
+    if (eq === -1) {
+      const next = argv[i + 1];
+      if (next == null || next.startsWith('--')) throw new HubError(1, 'missing value for --' + name);
+      value = next;
+      i++;
+    }
+    flags[name] = value;
+  }
+  return { flags, positionals };
+}
+
+function parseLimit(value) {
+  if (value == null) return 10;
+  if (!/^\d+$/.test(String(value))) throw new HubError(1, 'invalid --limit');
+  return Number(value);
+}
+
+function requiredChoice(value, allowed, flag) {
+  if (value == null || value === '') return '';
+  const folded = String(value).toLowerCase();
+  if (!allowed.includes(folded)) throw new HubError(1, 'invalid ' + flag);
+  return folded;
+}
+
+function buildOpts(parsed) {
+  const flags = parsed.flags;
+  const command = parsed.positionals[0] || '';
+  if (!command || !COMMANDS.has(command)) throw new HubError(1, 'unknown command');
+  const bucket = requiredChoice(flags.bucket, ['pending', 'incomplete', 'complete', 'all'], '--bucket') || 'pending';
+  if (!BUCKET_MAP[bucket]) throw new HubError(1, 'invalid --bucket');
+  const itemStatus = requiredChoice(flags.status, ['pending', 'scheduled'], '--status');
+  const expired = requiredChoice(flags.expired, ['has', 'no'], '--expired');
+  const code = flags.code == null ? 'local' : String(flags.code);
+  if (code !== 'local' && code !== 'remote') throw new HubError(1, 'invalid --code');
+  if (flags.csv && command !== 'list') throw new HubError(1, '--csv is only valid with list');
+  if (flags.week) {
+    throw new HubError(1, 'schedule --week is not available because the hub does not parse "Month / Dates" into calendar dates');
+  }
+  const opts = {
+    command,
+    json: !!flags.json,
+    csv: !!flags.csv,
+    limit: parseLimit(flags.limit),
+    ref: flags.ref == null ? 'main' : String(flags.ref),
+    code,
+    sourceDir: flags['source-dir'] ? path.resolve(flags['source-dir']) : '',
+    noCache: !!flags['no-cache'],
+    passphraseFile: flags['passphrase-file'] ? String(flags['passphrase-file']) : '',
+    bucket,
+    eventInput: flags.event ? String(flags.event).trim() : '',
+    event: '',
+    itemStatus,
+    consultant: flags.consultant ? String(flags.consultant).trim() : '',
+    expired,
+    course: flags.course ? String(flags.course).trim() : '',
+    search: flags.search ? String(flags.search).trim() : '',
+    query: '',
+    clientId: ''
+  };
+  safeRef(opts.ref);
+  if (opts.sourceDir && !fs.existsSync(opts.sourceDir)) throw new HubError(1, 'source dir not found');
+  if (opts.sourceDir && !fs.statSync(opts.sourceDir).isDirectory()) throw new HubError(1, 'source dir not found');
+  const rest = parsed.positionals.slice(1);
+  if (command === 'find') {
+    opts.query = rest.join(' ').trim();
+    if (!opts.query) throw new HubError(1, 'find needs text');
+  } else if (command === 'client') {
+    if (rest.length !== 1) throw new HubError(1, 'client needs a client id');
+    opts.clientId = String(rest[0]).trim();
+    if (!opts.clientId) throw new HubError(1, 'client needs a client id');
+  } else if (rest.length) {
+    throw new HubError(1, 'unknown command');
+  }
+  return opts;
+}
+
+function emit(opts, result) {
+  if (opts.json) {
+    process.stdout.write(scrub(JSON.stringify(result.payload, null, 2)) + '\n');
+    return;
+  }
+  if (opts.csv && result.payload && typeof result.payload.csvContent === 'string') {
+    process.stdout.write(scrub(result.payload.csvContent));
+    return;
+  }
+  process.stdout.write(scrub(result.lines.join('\n')) + '\n');
+}
+
+let activePassphrase = '';
+
+function scrub(text) {
+  const value = text == null ? '' : String(text);
+  if (!activePassphrase) return value;
+  return value.split(activePassphrase).join('[redacted]');
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  rejectPassphraseArgv(argv);
+  const parsed = parseArgs(argv);
+  if (parsed.flags.help) {
+    process.stdout.write(USAGE + '\n');
+    return;
+  }
+  const opts = buildOpts(parsed);
+  const code = await loadCode(opts);
+  const sandbox = loadHub(code);
+  activePassphrase = readPassphrase(opts);
+  opts.passphrase = activePassphrase;
+  const names = Object.keys(sandbox.__datasets || {}).map((key) => sandbox.__datasets[key].file + '.enc');
+  const data = await loadData(opts, names);
+  const result = await execute(sandbox, opts, data);
+  emit(opts, result);
+}
+
+main().catch((err) => {
+  const code = err && err.exitCode ? err.exitCode : 1;
+  const message = scrub(err && err.message ? err.message : 'mge-hub failed');
+  process.stderr.write(message + '\n');
+  process.exit(code);
+});
