@@ -1,9 +1,10 @@
 {
-  "timestamp": "2026-10-07T02:52:06-04:00",
-  "status": "success",
-  "clients": 763,
-  "pending": 365,
+  "timestamp": "2026-10-07T10:00:03-04:00",
+  "status": "failure",
+  "clients": null,
+  "pending": null,
   "contacts": null,
-  "pdf": 2927,
-  "backlog": 14769
+  "pdf": null,
+  "backlog": null,
+  "error": "NOT_LOGGED_IN"
 }
