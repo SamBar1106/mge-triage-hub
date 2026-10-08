@@ -1,7 +1,7 @@
 # ⚠️ ANTIGRAVITY ALERT: MGE nightly scraper failed
 
-- **When (America/Chicago):** Oct 7, 2026, 3:00 PM CDT
-- **Issue:** https://github.com/SamBar1106/mge-triage-hub/issues/16
+- **When (America/Chicago):** Oct 8, 2026, 9:00 AM CDT
+- **Issue:** https://github.com/SamBar1106/mge-triage-hub/issues/18
 - **Error:**
 
 ```
