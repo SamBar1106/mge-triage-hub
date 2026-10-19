@@ -1,11 +1,11 @@
 # ⚠️ ANTIGRAVITY ALERT: MGE nightly scraper failed
 
-- **When (America/Chicago):** Oct 11, 2026, 3:00 PM CDT
-- **Issue:** https://github.com/SamBar1106/mge-triage-hub/issues/21
+- **When (America/Chicago):** Oct 19, 2026, 6:55 AM CDT
+- **Issue:** https://github.com/SamBar1106/mge-triage-hub/issues/22
 - **Error:**
 
 ```
-NOT_LOGGED_IN
+No tab with id: redacted.
 ```
 
 ## What to do (agents: do this before anything else)
